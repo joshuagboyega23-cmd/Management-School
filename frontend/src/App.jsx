@@ -1,6 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Users, FileText, CreditCard, DollarSign, CheckCircle, GraduationCap, Plus, ExternalLink, Send } from 'lucide-react';
+import { Users, FileText, CreditCard, DollarSign, CheckCircle, GraduationCap } from 'lucide-react';
+
+import StudentsModule from './components/StudentsModule';
+import ReportsModule from './components/ReportsModule';
+import PaymentsModule from './components/PaymentsModule';
+import PayrollModule from './components/PayrollModule';
 
 const API_BASE = 'http://localhost:5000/api';
 
@@ -9,41 +14,9 @@ export default function App() {
   const [students, setStudents] = useState([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
-
-  // -------------------------------------------------------------
-  // FORM STATES
-  // -------------------------------------------------------------
-  // Grade Form State
-  const [gradeForm, setGradeForm] = useState({
-    student_id: '',
-    term: 'First Term 2026',
-    subject: 'Mathematics',
-    ca_score: '',
-    exam_score: ''
-  });
-
-  // Report Card Viewer State
-  const [reportView, setReportView] = useState({ student_id: '', term: 'First Term 2026' });
   const [reportData, setReportData] = useState(null);
 
-  // Fee Payment State
-  const [paymentForm, setPaymentForm] = useState({
-    studentId: '',
-    email: '',
-    amount: '',
-    term: 'First Term 2026'
-  });
-
-  // Payroll State
-  const [payrollForm, setPayrollForm] = useState({
-    staffName: '',
-    baseSalary: '',
-    monthYear: '09-2026'
-  });
-
-  // -------------------------------------------------------------
-  // API FETCHERS
-  // -------------------------------------------------------------
+  // Fetch Students
   const fetchStudents = async () => {
     try {
       setLoading(true);
@@ -65,60 +38,64 @@ export default function App() {
     setTimeout(() => setMessage({ type: '', text: '' }), 4000);
   };
 
-  // -------------------------------------------------------------
-  // HANDLERS
-  // -------------------------------------------------------------
-  // Submit Grades
-  const handleGradeSubmit = async (e) => {
-    e.preventDefault();
+  // 1. Add Student Action
+  const handleAddStudent = async (studentForm, onSuccess) => {
     try {
-      await axios.post(`${API_BASE}/students/grades`, gradeForm);
-      showNotification('success', 'Grade recorded successfully!');
-      setGradeForm({ ...gradeForm, ca_score: '', exam_score: '' });
+      await axios.post(`${API_BASE}/students`, studentForm);
+      showNotification('success', 'Student enrolled successfully!');
+      fetchStudents();
+      if (onSuccess) onSuccess();
     } catch (err) {
-      showNotification('error', err.response?.data?.message || 'Failed to submit grade');
+      showNotification('error', err.response?.data?.error || 'Failed to add student');
     }
   };
 
-  // Fetch Report Card
-  const handleFetchReportCard = async (e) => {
-    e.preventDefault();
-    if (!reportView.student_id) return;
+  // 2. Submit Grade Action
+  const handleGradeSubmit = async (gradeForm, onSuccess) => {
+    try {
+      await axios.post(`${API_BASE}/report-cards`, gradeForm);
+      showNotification('success', 'Grade recorded successfully!');
+      if (onSuccess) onSuccess();
+    } catch (err) {
+      showNotification('error', err.response?.data?.error || 'Failed to submit grade');
+    }
+  };
+
+  // 3. Fetch Report Card
+  const handleFetchReportCard = async (studentId) => {
+    if (!studentId) return;
     try {
       setLoading(true);
-      const res = await axios.get(`${API_BASE}/students/report-card/${reportView.student_id}/${reportView.term}`);
-      setReportData(res.data);
+      const res = await axios.get(`${API_BASE}/report-cards/student/${studentId}`);
+      setReportData(res.data.data);
     } catch (err) {
-      showNotification('error', err.response?.data?.message || 'Report card not found');
+      showNotification('error', 'Report card not found');
       setReportData(null);
     } finally {
       setLoading(false);
     }
   };
 
-  // Initialize Payment
-  const handlePaymentSubmit = async (e) => {
-    e.preventDefault();
+  // 4. Paystack Payment Action
+  const handlePaymentSubmit = async (paymentForm) => {
     try {
       const res = await axios.post(`${API_BASE}/payments/initialize`, paymentForm);
       if (res.data.success && res.data.paymentUrl) {
         window.open(res.data.paymentUrl, '_blank');
-        showNotification('success', 'Paystack payment page opened in a new tab.');
+        showNotification('success', 'Redirecting to Paystack checkout...');
       }
     } catch (err) {
-      showNotification('error', err.response?.data?.message || 'Payment initialization failed');
+      showNotification('error', err.response?.data?.error || 'Payment initialization failed');
     }
   };
 
-  // Process Payroll
-  const handlePayrollSubmit = async (e) => {
-    e.preventDefault();
+  // 5. Payroll Action
+  const handlePayrollSubmit = async (payrollForm) => {
     try {
       await axios.post(`${API_BASE}/payroll/process`, payrollForm);
-      showNotification('success', `Payroll processed for ${payrollForm.staffName}`);
-      setPayrollForm({ staffName: '', baseSalary: '', monthYear: '09-2026' });
+      showNotification('success', 'Payroll processed successfully');
     } catch (err) {
-      showNotification('error', err.response?.data?.message || 'Payroll processing failed');
+      showNotification('error', err.response?.data?.error || 'Payroll processing failed');
     }
   };
 
@@ -171,306 +148,42 @@ export default function App() {
           </span>
         </header>
 
-        {/* Global Banner Notification */}
+        {/* Global Notification Banner */}
         {message.text && (
           <div className={`mb-6 p-4 rounded-lg text-sm font-medium ${message.type === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-red-50 text-red-800 border border-red-200'}`}>
             {message.text}
           </div>
         )}
 
-        {/* ------------------------------------------------------------- */}
-        {/* 1. STUDENT RECORDS MODULE */}
-        {/* ------------------------------------------------------------- */}
+        {/* Tab Displays */}
         {activeTab === 'students' && (
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-            <div className="flex justify-between items-center mb-6">
-              <h3 className="text-lg font-bold text-gray-800">Enrolled Students</h3>
-            </div>
-            {loading ? (
-              <p className="text-gray-500">Loading student directory...</p>
-            ) : (
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="border-b border-gray-200 text-gray-600 text-sm">
-                    <th className="pb-3">ID</th>
-                    <th className="pb-3">Admission No</th>
-                    <th className="pb-3">Full Name</th>
-                    <th className="pb-3">Class</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100 text-sm text-gray-700">
-                  {students.length > 0 ? (
-                    students.map((student) => (
-                      <tr key={student.id}>
-                        <td className="py-3 font-mono text-gray-400">{student.id}</td>
-                        <td className="py-3 font-mono text-blue-600">{student.admission_no}</td>
-                        <td className="py-3 font-medium">{student.name}</td>
-                        <td className="py-3">{student.class_name}</td>
-                      </tr>
-                    ))
-                  ) : (
-                    <tr>
-                      <td colSpan="4" className="py-4 text-center text-gray-400">No student records found in database.</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            )}
-          </div>
+          <StudentsModule 
+            students={students} 
+            loading={loading} 
+            onAddStudent={handleAddStudent} 
+          />
         )}
 
-        {/* ------------------------------------------------------------- */}
-        {/* 2. REPORT CARDS & GRADING MODULE */}
-        {/* ------------------------------------------------------------- */}
         {activeTab === 'reports' && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            {/* Form: Add Subject Grade */}
-            <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-              <h3 className="text-lg font-bold text-gray-800 mb-4">Record Assessment Score</h3>
-              <form onSubmit={handleGradeSubmit} className="space-y-4">
-                <div>
-                  <label className="block text-xs font-semibold text-gray-600 mb-1">Select Student</label>
-                  <select 
-                    value={gradeForm.student_id} 
-                    onChange={(e) => setGradeForm({ ...gradeForm, student_id: e.target.value })}
-                    required 
-                    className="w-full p-2.5 border border-gray-300 rounded-lg text-sm bg-white"
-                  >
-                    <option value="">-- Choose Student --</option>
-                    {students.map((s) => (
-                      <option key={s.id} value={s.id}>{s.name} ({s.class_name})</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-600 mb-1">Term</label>
-                    <input 
-                      type="text" 
-                      value={gradeForm.term} 
-                      onChange={(e) => setGradeForm({ ...gradeForm, term: e.target.value })}
-                      required 
-                      className="w-full p-2.5 border border-gray-300 rounded-lg text-sm"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-600 mb-1">Subject</label>
-                    <input 
-                      type="text" 
-                      value={gradeForm.subject} 
-                      onChange={(e) => setGradeForm({ ...gradeForm, subject: e.target.value })}
-                      required 
-                      className="w-full p-2.5 border border-gray-300 rounded-lg text-sm"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-600 mb-1">CA Score (Max 40)</label>
-                    <input 
-                      type="number" 
-                      max="40"
-                      value={gradeForm.ca_score} 
-                      onChange={(e) => setGradeForm({ ...gradeForm, ca_score: e.target.value })}
-                      required 
-                      className="w-full p-2.5 border border-gray-300 rounded-lg text-sm"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-600 mb-1">Exam Score (Max 60)</label>
-                    <input 
-                      type="number" 
-                      max="60"
-                      value={gradeForm.exam_score} 
-                      onChange={(e) => setGradeForm({ ...gradeForm, exam_score: e.target.value })}
-                      required 
-                      className="w-full p-2.5 border border-gray-300 rounded-lg text-sm"
-                    />
-                  </div>
-                </div>
-
-                <button type="submit" className="w-full bg-blue-600 text-white py-2.5 rounded-lg text-sm font-semibold hover:bg-blue-700 transition">
-                  Submit Grade Record
-                </button>
-              </form>
-            </div>
-
-            {/* View Report Card */}
-            <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-              <h3 className="text-lg font-bold text-gray-800 mb-4">View Term Report Card</h3>
-              <form onSubmit={handleFetchReportCard} className="flex gap-3 mb-6">
-                <select 
-                  value={reportView.student_id} 
-                  onChange={(e) => setReportView({ ...reportView, student_id: e.target.value })}
-                  required 
-                  className="flex-1 p-2.5 border border-gray-300 rounded-lg text-sm bg-white"
-                >
-                  <option value="">-- Choose Student --</option>
-                  {students.map((s) => (
-                    <option key={s.id} value={s.id}>{s.name}</option>
-                  ))}
-                </select>
-                <button type="submit" className="bg-slate-900 text-white px-4 py-2.5 rounded-lg text-sm font-medium hover:bg-slate-800">
-                  Generate
-                </button>
-              </form>
-
-              {reportData && (
-                <div className="border border-gray-200 p-4 rounded-lg bg-gray-50 text-sm space-y-3">
-                  <div className="border-b pb-2 flex justify-between font-bold">
-                    <span>{reportData.student.full_name}</span>
-                    <span className="text-blue-600">{reportData.term}</span>
-                  </div>
-                  <div className="text-xs text-gray-600">
-                    Average Score: <strong className="text-gray-900">{reportData.overallAverage}%</strong> | Total Subjects: <strong>{reportData.totalSubjects}</strong>
-                  </div>
-                  <table className="w-full text-left border-collapse text-xs mt-2 bg-white rounded border">
-                    <thead>
-                      <tr className="border-b bg-gray-100">
-                        <th className="p-2">Subject</th>
-                        <th className="p-2">CA</th>
-                        <th className="p-2">Exam</th>
-                        <th className="p-2">Total</th>
-                        <th className="p-2">Grade</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {reportData.subjects.map((s, idx) => (
-                        <tr key={idx} className="border-b">
-                          <td className="p-2 font-medium">{s.subject}</td>
-                          <td className="p-2">{s.ca_score}</td>
-                          <td className="p-2">{s.exam_score}</td>
-                          <td className="p-2 font-bold">{s.total_score}</td>
-                          <td className="p-2 text-blue-600 font-bold">{s.grade}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          </div>
+          <ReportsModule 
+            students={students} 
+            onSubmitGrade={handleGradeSubmit} 
+            onFetchReportCard={handleFetchReportCard} 
+            reportData={reportData} 
+          />
         )}
 
-        {/* ------------------------------------------------------------- */}
-        {/* 3. FEE PAYMENTS MODULE */}
-        {/* ------------------------------------------------------------- */}
         {activeTab === 'payments' && (
-          <div className="max-w-xl bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-            <h3 className="text-lg font-bold text-gray-800 mb-2">School Fee Checkout (Paystack)</h3>
-            <p className="text-xs text-gray-500 mb-6">Initialize direct online tuition payments for students.</p>
-
-            <form onSubmit={handlePaymentSubmit} className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-1">Select Student</label>
-                <select 
-                  value={paymentForm.studentId} 
-                  onChange={(e) => setPaymentForm({ ...paymentForm, studentId: e.target.value })}
-                  required 
-                  className="w-full p-2.5 border border-gray-300 rounded-lg text-sm bg-white"
-                >
-                  <option value="">-- Choose Student --</option>
-                  {students.map((s) => (
-                    <option key={s.id} value={s.id}>{s.name} ({s.admission_no})</option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-1">Parent / Guardian Email</label>
-                <input 
-                  type="email" 
-                  value={paymentForm.email} 
-                  onChange={(e) => setPaymentForm({ ...paymentForm, email: e.target.value })}
-                  placeholder="parent@example.com"
-                  required 
-                  className="w-full p-2.5 border border-gray-300 rounded-lg text-sm"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-gray-600 mb-1">Amount (₦)</label>
-                  <input 
-                    type="number" 
-                    value={paymentForm.amount} 
-                    onChange={(e) => setPaymentForm({ ...paymentForm, amount: e.target.value })}
-                    placeholder="50000"
-                    required 
-                    className="w-full p-2.5 border border-gray-300 rounded-lg text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-600 mb-1">Term</label>
-                  <input 
-                    type="text" 
-                    value={paymentForm.term} 
-                    onChange={(e) => setPaymentForm({ ...paymentForm, term: e.target.value })}
-                    required 
-                    className="w-full p-2.5 border border-gray-300 rounded-lg text-sm"
-                  />
-                </div>
-              </div>
-
-              <button type="submit" className="w-full bg-emerald-600 text-white py-2.5 rounded-lg text-sm font-semibold hover:bg-emerald-700 transition flex items-center justify-center gap-2">
-                Pay Fees via Paystack <ExternalLink className="h-4 w-4" />
-              </button>
-            </form>
-          </div>
+          <PaymentsModule 
+            students={students} 
+            onProcessPayment={handlePaymentSubmit} 
+          />
         )}
 
-        {/* ------------------------------------------------------------- */}
-        {/* 4. STAFF PAYROLL MODULE */}
-        {/* ------------------------------------------------------------- */}
         {activeTab === 'payroll' && (
-          <div className="max-w-xl bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-            <h3 className="text-lg font-bold text-gray-800 mb-2">Process Staff Salary</h3>
-            <p className="text-xs text-gray-500 mb-6">Issue monthly payroll payments to teachers and school administration.</p>
-
-            <form onSubmit={handlePayrollSubmit} className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-1">Staff Full Name</label>
-                <input 
-                  type="text" 
-                  value={payrollForm.staffName} 
-                  onChange={(e) => setPayrollForm({ ...payrollForm, staffName: e.target.value })}
-                  placeholder="e.g. Mr. John Doe"
-                  required 
-                  className="w-full p-2.5 border border-gray-300 rounded-lg text-sm"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-gray-600 mb-1">Base Salary (₦)</label>
-                  <input 
-                    type="number" 
-                    value={payrollForm.baseSalary} 
-                    onChange={(e) => setPayrollForm({ ...payrollForm, baseSalary: e.target.value })}
-                    placeholder="150000"
-                    required 
-                    className="w-full p-2.5 border border-gray-300 rounded-lg text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-600 mb-1">Month/Year</label>
-                  <input 
-                    type="text" 
-                    value={payrollForm.monthYear} 
-                    onChange={(e) => setPayrollForm({ ...payrollForm, monthYear: e.target.value })}
-                    required 
-                    className="w-full p-2.5 border border-gray-300 rounded-lg text-sm"
-                  />
-                </div>
-              </div>
-
-              <button type="submit" className="w-full bg-slate-900 text-white py-2.5 rounded-lg text-sm font-semibold hover:bg-slate-800 transition flex items-center justify-center gap-2">
-                Process Salary Disbursement <Send className="h-4 w-4" />
-              </button>
-            </form>
-          </div>
+          <PayrollModule 
+            onProcessPayroll={handlePayrollSubmit} 
+          />
         )}
       </main>
     </div>

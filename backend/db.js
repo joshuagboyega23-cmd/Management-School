@@ -14,7 +14,7 @@ const initializeDb = async () => {
   try {
     const client = await pool.connect();
     console.log('✅ Connected to Neon Cloud PostgreSQL Database!');
-    
+
     const sqlPath = path.join(__dirname, 'init.sql');
     if (fs.existsSync(sqlPath)) {
       const sql = fs.readFileSync(sqlPath, 'utf8');
@@ -23,13 +23,11 @@ const initializeDb = async () => {
     }
     client.release();
   } catch (error) {
-    console.error('❌ Database Error Details:', error.message);
+    console.error('❌ Database Initialization Error:', error.message);
   }
 };
 
 initializeDb();
 
-module.exports = {
-  query: (text, params) => pool.query(text, params),
-  pool
-};
+// Export pool directly as default so 'const pool = require("./db")' works everywhere
+module.exports = pool;
