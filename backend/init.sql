@@ -1,19 +1,15 @@
--- Idempotent schema initialization for Neon PostgreSQL
--- Drop existing tables & types in reverse dependency order
-DROP TABLE IF EXISTS registration_attempts CASCADE;
-DROP TABLE IF EXISTS parent_student_links CASCADE;
-DROP TABLE IF EXISTS report_cards CASCADE;
-DROP TABLE IF EXISTS fee_payments CASCADE;
-DROP TABLE IF EXISTS payments CASCADE;
-DROP TABLE IF EXISTS payroll CASCADE;
-DROP TABLE IF EXISTS students CASCADE;
-DROP TABLE IF EXISTS classes CASCADE;
-DROP TABLE IF EXISTS teachers CASCADE;
-DROP TABLE IF EXISTS users CASCADE;
-DROP TYPE IF EXISTS class_level CASCADE;
+-- Idempotent schema initialization for Neon PostgreSQL (Preserves existing data)
 
--- 1. Users Table (Authentication & Core Identity)
-CREATE TABLE users (
+-- 1. Create enum type safely if it does not exist
+DO $$ 
+BEGIN 
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'class_level') THEN 
+        CREATE TYPE class_level AS ENUM ('JSS1', 'JSS2', 'JSS3', 'SS1', 'SS2', 'SS3'); 
+    END IF; 
+END $$;
+
+-- 2. Users Table (Authentication & Core Identity)
+CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
     full_name VARCHAR(255) NOT NULL,
     email VARCHAR(255) UNIQUE NOT NULL,
@@ -22,8 +18,8 @@ CREATE TABLE users (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- 2. Teachers Table
-CREATE TABLE teachers (
+-- 3. Teachers Table
+CREATE TABLE IF NOT EXISTS teachers (
     id SERIAL PRIMARY KEY,
     user_id INT REFERENCES users(id) ON DELETE CASCADE,
     staff_id VARCHAR(50) UNIQUE NOT NULL,
@@ -32,10 +28,8 @@ CREATE TABLE teachers (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- 3. Class Level Enum & Classes Table
-CREATE TYPE class_level AS ENUM ('JSS1', 'JSS2', 'JSS3', 'SS1', 'SS2', 'SS3');
-
-CREATE TABLE classes (
+-- 4. Classes Table
+CREATE TABLE IF NOT EXISTS classes (
     id SERIAL PRIMARY KEY,
     name VARCHAR(50) NOT NULL UNIQUE, -- e.g. 'JSS1A'
     level class_level NOT NULL,
@@ -45,9 +39,9 @@ CREATE TABLE classes (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- 4. Students Table
+-- 5. Students Table
 -- user_id is nullable: pre-loaded upon roster import, claimed when student self-registers
-CREATE TABLE students (
+CREATE TABLE IF NOT EXISTS students (
     id SERIAL PRIMARY KEY,
     full_name VARCHAR(255) NOT NULL,
     user_id INT REFERENCES users(id) ON DELETE SET NULL,
@@ -58,8 +52,8 @@ CREATE TABLE students (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- 5. Parent-Student Links Table (One parent can link multiple children)
-CREATE TABLE parent_student_links (
+-- 6. Parent-Student Links Table (One parent can link multiple children)
+CREATE TABLE IF NOT EXISTS parent_student_links (
     id SERIAL PRIMARY KEY,
     parent_user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     student_id INT NOT NULL REFERENCES students(id) ON DELETE CASCADE,
@@ -68,8 +62,8 @@ CREATE TABLE parent_student_links (
     UNIQUE (parent_user_id, student_id)
 );
 
--- 6. Registration Attempts Table (Audit trail against admission guessing/impersonation)
-CREATE TABLE registration_attempts (
+-- 7. Registration Attempts Table (Audit trail against admission guessing/impersonation)
+CREATE TABLE IF NOT EXISTS registration_attempts (
     id SERIAL PRIMARY KEY,
     admission_number_entered VARCHAR(100),
     dob_entered DATE,
@@ -79,8 +73,8 @@ CREATE TABLE registration_attempts (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- 7. Report Cards Table
-CREATE TABLE report_cards (
+-- 8. Report Cards Table
+CREATE TABLE IF NOT EXISTS report_cards (
     id SERIAL PRIMARY KEY,
     student_id INT NOT NULL REFERENCES students(id) ON DELETE CASCADE,
     subject VARCHAR(100) NOT NULL,
@@ -93,8 +87,8 @@ CREATE TABLE report_cards (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- 8. Fee Payments Table (Paystack Integration)
-CREATE TABLE fee_payments (
+-- 9. Fee Payments Table (Paystack Integration)
+CREATE TABLE IF NOT EXISTS fee_payments (
     id SERIAL PRIMARY KEY,
     student_id INT NOT NULL REFERENCES students(id) ON DELETE CASCADE,
     amount NUMERIC(10,2) NOT NULL,
@@ -104,8 +98,8 @@ CREATE TABLE fee_payments (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- 9. Staff Payroll Table
-CREATE TABLE payroll (
+-- 10. Staff Payroll Table
+CREATE TABLE IF NOT EXISTS payroll (
     id SERIAL PRIMARY KEY,
     staff_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     amount NUMERIC(10,2) NOT NULL,
@@ -130,7 +124,7 @@ ALTER TABLE fee_payments FORCE ROW LEVEL SECURITY;
 ALTER TABLE parent_student_links ENABLE ROW LEVEL SECURITY;
 ALTER TABLE parent_student_links FORCE ROW LEVEL SECURITY;
 
--- 1. Students Table Access Policy
+-- 1. Students Table Access Policy (Fail-Closed)
 DROP POLICY IF EXISTS students_access_policy ON students;
 CREATE POLICY students_access_policy ON students
 FOR ALL
@@ -150,7 +144,7 @@ USING (
     )
 );
 
--- 2. Report Cards Table Access Policy
+-- 2. Report Cards Table Access Policy (Fail-Closed)
 DROP POLICY IF EXISTS report_cards_access_policy ON report_cards;
 CREATE POLICY report_cards_access_policy ON report_cards
 FOR ALL
@@ -173,7 +167,7 @@ USING (
     )
 );
 
--- 3. Fee Payments Table Access Policy
+-- 3. Fee Payments Table Access Policy (Fail-Closed)
 DROP POLICY IF EXISTS fee_payments_access_policy ON fee_payments;
 CREATE POLICY fee_payments_access_policy ON fee_payments
 FOR ALL
@@ -196,7 +190,7 @@ USING (
     )
 );
 
--- 4. Parent-Student Links Table Access Policy
+-- 4. Parent-Student Links Table Access Policy (Fail-Closed)
 DROP POLICY IF EXISTS parent_student_links_access_policy ON parent_student_links;
 CREATE POLICY parent_student_links_access_policy ON parent_student_links
 FOR ALL
@@ -214,3 +208,15 @@ USING (
         )
     )
 );
+
+-- =============================================================
+-- SEED DEFAULT SUPERADMIN (if not exists)
+-- =============================================================
+INSERT INTO users (full_name, email, password_hash, role)
+VALUES (
+    'System Administrator',
+    'admin@pinnacleheights.edu.ng',
+    '$2a$10$tH72EqO56.22mtWfR0u0quoxrs0sNs6ulN1Y0T/zKIUcbbFLREbEW',
+    'SUPERADMIN'
+)
+ON CONFLICT (email) DO NOTHING;
