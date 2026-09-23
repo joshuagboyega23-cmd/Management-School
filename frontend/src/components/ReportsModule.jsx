@@ -114,7 +114,7 @@ export default function ReportsModule({ students, onSubmitGrade, onFetchReportCa
               <option key={s.id} value={s.id}>{s.name}</option>
             ))}
           </select>
-          <button type="submit" className="bg-slate-900 text-white px-4 py-2.5 rounded-lg text-sm font-medium hover:bg-slate-800">
+          <button type="submit" className="bg-slate-800 text-white px-4 py-2.5 rounded-lg text-sm font-medium hover:bg-slate-800">
             Fetch
           </button>
         </form>
