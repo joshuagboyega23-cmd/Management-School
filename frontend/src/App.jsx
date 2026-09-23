@@ -10,17 +10,12 @@ import StudentDashboard from './components/StudentDashboard';
 import ParentDashboard from './components/ParentDashboard';
 import TeacherDashboard from './components/TeacherDashboard';
 
-function LandingPageWrapper() {
-  const navigate = useNavigate();
-  return <LandingPage onEnterPortal={() => navigate('/login')} />;
-}
-
 export default function App() {
   return (
     <BrowserRouter>
       <Routes>
         {/* Public Routes */}
-        <Route path="/" element={<LandingPageWrapper />} />
+        <Route path="/" element={<LandingPage />} />
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
 

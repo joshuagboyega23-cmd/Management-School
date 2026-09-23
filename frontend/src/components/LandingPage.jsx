@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import {
   GraduationCap, BookOpen, Users, Trophy, Phone, Mail, MapPin,
   ChevronRight, Star, Shield, Globe, Clock, ArrowRight, Menu, X,
-  Award, Target, Heart, Link
+  Award, Target, Heart
 } from 'lucide-react';
 
 // ─── School Configuration (PLACEHOLDERS) ──────────────────────────────────────
@@ -167,12 +168,18 @@ function Navbar({ onEnterPortal }) {
 
         {/* CTA */}
         <div className="hidden md:flex items-center gap-3">
-          <button
-            onClick={onEnterPortal}
-            className="bg-blue-700 hover:bg-blue-800 text-white text-sm font-semibold px-5 py-2 rounded-lg transition flex items-center gap-2"
+          <Link
+            to="/login"
+            className="bg-blue-700 hover:bg-blue-800 text-white text-sm font-semibold px-4 py-2 rounded-lg transition flex items-center gap-2 shadow"
           >
-            Staff Portal <ArrowRight className="h-4 w-4" />
-          </button>
+            Portal Login <ArrowRight className="h-4 w-4" />
+          </Link>
+          <Link
+            to="/register"
+            className="bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold px-3 py-2 rounded-lg transition"
+          >
+            Register
+          </Link>
         </div>
 
         {/* Mobile hamburger */}
@@ -183,7 +190,7 @@ function Navbar({ onEnterPortal }) {
 
       {/* Mobile menu */}
       {open && (
-        <div className="md:hidden bg-white border-t border-slate-100 px-6 py-4 flex flex-col gap-4 shadow-lg">
+        <div className="md:hidden bg-white border-t border-slate-100 px-6 py-4 flex flex-col gap-3 shadow-lg">
           {links.map((l) => (
             <a key={l} href={`#${l.toLowerCase()}`}
               onClick={() => setOpen(false)}
@@ -191,12 +198,20 @@ function Navbar({ onEnterPortal }) {
               {l}
             </a>
           ))}
-          <button
-            onClick={onEnterPortal}
-            className="bg-blue-700 text-white text-sm font-semibold px-5 py-2 rounded-lg text-center"
+          <Link
+            to="/login"
+            onClick={() => setOpen(false)}
+            className="bg-blue-700 text-white text-sm font-semibold px-5 py-2.5 rounded-lg text-center"
           >
-            Staff Portal
-          </button>
+            Portal Login
+          </Link>
+          <Link
+            to="/register"
+            onClick={() => setOpen(false)}
+            className="bg-slate-100 text-slate-800 text-sm font-semibold px-5 py-2.5 rounded-lg text-center"
+          >
+            Student / Parent Register
+          </Link>
         </div>
       )}
     </nav>
@@ -204,7 +219,7 @@ function Navbar({ onEnterPortal }) {
 }
 
 // ─── Hero ─────────────────────────────────────────────────────────────────────
-function Hero({ onEnterPortal }) {
+function Hero() {
   return (
     <section
       className="relative min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-950 via-blue-900 to-blue-800 text-white overflow-hidden"
@@ -242,11 +257,16 @@ function Hero({ onEnterPortal }) {
             className="bg-yellow-400 hover:bg-yellow-300 text-blue-950 font-bold px-8 py-4 rounded-xl text-sm transition flex items-center justify-center gap-2 shadow-lg">
             Apply for Admission <ChevronRight className="h-4 w-4" />
           </a>
-          <button
-            onClick={onEnterPortal}
+          <Link
+            to="/login"
             className="bg-white/10 hover:bg-white/20 backdrop-blur border border-white/20 text-white font-semibold px-8 py-4 rounded-xl text-sm transition flex items-center justify-center gap-2">
-            Staff / Admin Portal <ArrowRight className="h-4 w-4" />
-          </button>
+            Staff & Admin Portal <ArrowRight className="h-4 w-4" />
+          </Link>
+          <Link
+            to="/register"
+            className="bg-blue-600/80 hover:bg-blue-600 backdrop-blur border border-blue-400/40 text-white font-semibold px-8 py-4 rounded-xl text-sm transition flex items-center justify-center gap-2 shadow-lg">
+            Student / Parent Sign Up <ChevronRight className="h-4 w-4" />
+          </Link>
         </div>
       </div>
 
@@ -581,7 +601,7 @@ function Contact() {
 }
 
 // ─── Footer ──────────────────────────────────────────────────────────────────
-function Footer({ onEnterPortal }) {
+function Footer() {
   return (
     <footer className="bg-blue-950 text-blue-200">
       <div className="max-w-7xl mx-auto px-6 py-14 grid md:grid-cols-4 gap-10">
@@ -608,7 +628,10 @@ function Footer({ onEnterPortal }) {
               </li>
             ))}
             <li>
-              <button onClick={onEnterPortal} className="hover:text-white transition text-left">Staff Portal</button>
+              <Link to="/login" className="hover:text-white transition">Admin & Staff Portal</Link>
+            </li>
+            <li>
+              <Link to="/register" className="hover:text-white transition">Student & Parent Registration</Link>
             </li>
           </ul>
         </div>
@@ -632,17 +655,17 @@ function Footer({ onEnterPortal }) {
 }
 
 // ─── Main Export ─────────────────────────────────────────────────────────────
-export default function LandingPage({ onEnterPortal }) {
+export default function LandingPage() {
   return (
     <div className="font-sans antialiased">
-      <Navbar onEnterPortal={onEnterPortal} />
-      <Hero onEnterPortal={onEnterPortal} />
+      <Navbar />
+      <Hero />
       <About />
       <Academics />
       <Admissions />
       <News />
       <Contact />
-      <Footer onEnterPortal={onEnterPortal} />
+      <Footer />
     </div>
   );
 }

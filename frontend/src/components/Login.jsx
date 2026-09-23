@@ -63,10 +63,24 @@ export default function Login() {
             <GraduationCap className="h-8 w-8 text-white" />
           </div>
         </div>
-        <h2 className="text-3xl font-extrabold text-white tracking-tight">Portal Login</h2>
+        <h2 className="text-3xl font-extrabold text-white tracking-tight">Portal Sign In</h2>
         <p className="mt-2 text-sm text-slate-400">
-          Sign in to access your student, parent, teacher, or administrative dashboard
+          Sign in to access your Admin, Teacher, Student, or Parent dashboard
         </p>
+        <div className="flex flex-wrap justify-center gap-2 mt-3">
+          <span className="text-[11px] bg-slate-800 text-blue-300 border border-slate-700 px-2.5 py-1 rounded-full">
+            🔑 Admin Portal
+          </span>
+          <span className="text-[11px] bg-slate-800 text-indigo-300 border border-slate-700 px-2.5 py-1 rounded-full">
+            📝 Teacher Portal
+          </span>
+          <span className="text-[11px] bg-slate-800 text-emerald-300 border border-slate-700 px-2.5 py-1 rounded-full">
+            🎓 Student Portal
+          </span>
+          <span className="text-[11px] bg-slate-800 text-purple-300 border border-slate-700 px-2.5 py-1 rounded-full">
+            👨‍👩‍👧 Parent Portal
+          </span>
+        </div>
       </div>
 
       <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md px-4">
