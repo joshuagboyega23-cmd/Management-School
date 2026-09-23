@@ -9,6 +9,8 @@ export default function PaymentsModule({ students, onProcessPayment }) {
     term: 'First Term 2026'
   });
 
+  const studentList = Array.isArray(students) ? students : [];
+
   const handleSubmit = (e) => {
     e.preventDefault();
     onProcessPayment(paymentForm);
@@ -29,7 +31,7 @@ export default function PaymentsModule({ students, onProcessPayment }) {
             className="w-full p-2.5 border border-gray-300 rounded-lg text-sm bg-white"
           >
             <option value="">-- Choose Student --</option>
-            {students.map((s) => (
+            {studentList.map((s) => (
               <option key={s.id} value={s.id}>{s.name} ({s.admission_no})</option>
             ))}
           </select>

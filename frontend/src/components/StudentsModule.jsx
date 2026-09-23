@@ -43,8 +43,8 @@ export default function StudentsModule({ students, loading, onAddStudent }) {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100 text-sm text-gray-700">
-            {students.length > 0 ? (
-              students.map((student) => (
+            {(Array.isArray(students) ? students : []).length > 0 ? (
+              (Array.isArray(students) ? students : []).map((student) => (
                 <tr key={student.id}>
                   <td className="py-3 font-mono text-blue-600">{student.admission_no}</td>
                   <td className="py-3 font-medium">{student.name}</td>

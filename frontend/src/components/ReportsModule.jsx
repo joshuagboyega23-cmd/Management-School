@@ -11,6 +11,9 @@ export default function ReportsModule({ students, onSubmitGrade, onFetchReportCa
 
   const [reportView, setReportView] = useState({ studentId: '' });
 
+  const studentList = Array.isArray(students) ? students : [];
+  const reportList = Array.isArray(reportData) ? reportData : [];
+
   const handleGradeSubmit = (e) => {
     e.preventDefault();
     onSubmitGrade(gradeForm, () => {
@@ -39,7 +42,7 @@ export default function ReportsModule({ students, onSubmitGrade, onFetchReportCa
               className="w-full p-2.5 border border-gray-300 rounded-lg text-sm bg-white"
             >
               <option value="">-- Choose Student --</option>
-              {students.map((s) => (
+              {studentList.map((s) => (
                 <option key={s.id} value={s.id}>{s.name} ({s.class_name})</option>
               ))}
             </select>
@@ -110,7 +113,7 @@ export default function ReportsModule({ students, onSubmitGrade, onFetchReportCa
             className="flex-1 p-2.5 border border-gray-300 rounded-lg text-sm bg-white"
           >
             <option value="">-- Choose Student --</option>
-            {students.map((s) => (
+            {studentList.map((s) => (
               <option key={s.id} value={s.id}>{s.name}</option>
             ))}
           </select>
@@ -119,7 +122,7 @@ export default function ReportsModule({ students, onSubmitGrade, onFetchReportCa
           </button>
         </form>
 
-        {reportData && (
+        {reportList.length > 0 ? (
           <table className="w-full text-left border-collapse text-xs bg-white rounded border border-gray-200">
             <thead>
               <tr className="border-b bg-gray-100">
@@ -131,7 +134,7 @@ export default function ReportsModule({ students, onSubmitGrade, onFetchReportCa
               </tr>
             </thead>
             <tbody>
-              {reportData.map((s, idx) => (
+              {reportList.map((s, idx) => (
                 <tr key={idx} className="border-b">
                   <td className="p-2 font-medium">{s.subject}</td>
                   <td className="p-2">{s.ca_score}</td>
@@ -142,6 +145,8 @@ export default function ReportsModule({ students, onSubmitGrade, onFetchReportCa
               ))}
             </tbody>
           </table>
+        ) : reportData && (
+          <p className="text-xs text-gray-500 italic py-2">No grades recorded yet for this student.</p>
         )}
       </div>
     </div>

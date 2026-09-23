@@ -1,15 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Users, FileText, CreditCard, DollarSign, CheckCircle, GraduationCap } from 'lucide-react';
+import { Users, FileText, CreditCard, DollarSign, CheckCircle, GraduationCap, ArrowLeft } from 'lucide-react';
 
 import StudentsModule from './components/StudentsModule';
 import ReportsModule from './components/ReportsModule';
 import PaymentsModule from './components/PaymentsModule';
 import PayrollModule from './components/PayrollModule';
+import LandingPage from './components/LandingPage';
 
 const API_BASE = 'http://localhost:5000/api';
 
 export default function App() {
+  const [view, setView] = useState('landing'); // 'landing' | 'dashboard'
   const [activeTab, setActiveTab] = useState('students');
   const [students, setStudents] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -21,17 +23,19 @@ export default function App() {
     try {
       setLoading(true);
       const res = await axios.get(`${API_BASE}/students`);
-      setStudents(res.data);
+      const list = Array.isArray(res.data?.data) ? res.data.data : (Array.isArray(res.data) ? res.data : []);
+      setStudents(list);
     } catch (err) {
       console.error('Error fetching students:', err);
+      setStudents([]);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchStudents();
-  }, []);
+    if (view === 'dashboard') fetchStudents();
+  }, [view]);
 
   const showNotification = (type, text) => {
     setMessage({ type, text });
@@ -99,13 +103,22 @@ export default function App() {
     }
   };
 
+  // ── Landing page ────────────────────────────────────────────────────────────
+  if (view === 'landing') {
+    return <LandingPage onEnterPortal={() => setView('dashboard')} />;
+  }
+
+  // ── Dashboard ───────────────────────────────────────────────────────────────
   return (
     <div className="flex h-screen bg-gray-100 font-sans">
       {/* Sidebar Navigation */}
       <aside className="w-64 bg-slate-900 text-white flex flex-col p-4 shadow-lg">
         <div className="flex items-center gap-3 px-2 py-4 border-b border-slate-800">
           <GraduationCap className="h-8 w-8 text-blue-400" />
-          <h1 className="text-xl font-bold tracking-wide">Academia SMS</h1>
+          <div>
+            <h1 className="text-base font-bold leading-tight">Pinnacle Heights</h1>
+            <p className="text-xs text-slate-400 leading-tight">Admin Portal</p>
+          </div>
         </div>
 
         <nav className="mt-6 flex flex-col gap-2">
@@ -134,6 +147,16 @@ export default function App() {
             <DollarSign className="h-5 w-5" /> Staff Payroll
           </button>
         </nav>
+
+        {/* Back to website */}
+        <div className="mt-auto pt-4 border-t border-slate-800">
+          <button
+            onClick={() => setView('landing')}
+            className="flex items-center gap-2 text-slate-400 hover:text-white text-xs px-2 py-2 rounded transition w-full"
+          >
+            <ArrowLeft className="h-4 w-4" /> Back to School Website
+          </button>
+        </div>
       </aside>
 
       {/* Main Content Area */}
@@ -141,7 +164,7 @@ export default function App() {
         <header className="flex justify-between items-center mb-6 bg-white p-6 rounded-xl shadow-sm border border-gray-200">
           <div>
             <h2 className="text-2xl font-bold text-gray-800 capitalize">{activeTab.replace('-', ' ')} Portal</h2>
-            <p className="text-sm text-gray-500">School Management Administrative Dashboard</p>
+            <p className="text-sm text-gray-500">Pinnacle Heights Academy — Administrative Dashboard</p>
           </div>
           <span className="bg-emerald-100 text-emerald-800 text-xs px-3 py-1 rounded-full font-semibold flex items-center gap-1">
             <CheckCircle className="h-3 w-3" /> API Connected
