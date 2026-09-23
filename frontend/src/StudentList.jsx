@@ -1,17 +1,21 @@
 import { useEffect, useState } from 'react';
+import API from './opi';
 
 export default function StudentList() {
   const [students, setStudents] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch('http://localhost:5000/api/students')
-      .then((res) => res.json())
-      .then((data) => {
-        setStudents(data);
+    API.get('/students')
+      .then((res) => {
+        const list = Array.isArray(res.data?.data) ? res.data.data : (Array.isArray(res.data) ? res.data : []);
+        setStudents(list);
         setLoading(false);
       })
-      .catch((err) => console.error('Error fetching students:', err));
+      .catch((err) => {
+        console.error('Error fetching students:', err);
+        setLoading(false);
+      });
   }, []);
 
   if (loading) return <p>Loading student directory...</p>;
@@ -32,8 +36,8 @@ export default function StudentList() {
           {students.map((student) => (
             <tr key={student.id}>
               <td>{student.id}</td>
-              <td>{student.admission_no}</td>
-              <td>{student.name}</td>
+              <td>{student.admission_no || student.admission_number}</td>
+              <td>{student.name || student.full_name}</td>
               <td>{student.class_name}</td>
             </tr>
           ))}

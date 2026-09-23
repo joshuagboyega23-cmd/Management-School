@@ -135,9 +135,7 @@ DROP POLICY IF EXISTS students_access_policy ON students;
 CREATE POLICY students_access_policy ON students
 FOR ALL
 USING (
-    current_setting('app.current_role', true) IS NULL
-    OR current_setting('app.current_role', true) = ''
-    OR current_setting('app.current_role', true) IN ('TEACHER', 'ADMIN', 'SUPERADMIN')
+    current_setting('app.current_role', true) IN ('TEACHER', 'ADMIN', 'SUPERADMIN')
     OR (
         current_setting('app.current_role', true) = 'STUDENT'
         AND user_id = NULLIF(current_setting('app.current_user_id', true), '')::INT
@@ -157,9 +155,7 @@ DROP POLICY IF EXISTS report_cards_access_policy ON report_cards;
 CREATE POLICY report_cards_access_policy ON report_cards
 FOR ALL
 USING (
-    current_setting('app.current_role', true) IS NULL
-    OR current_setting('app.current_role', true) = ''
-    OR current_setting('app.current_role', true) IN ('TEACHER', 'ADMIN', 'SUPERADMIN')
+    current_setting('app.current_role', true) IN ('TEACHER', 'ADMIN', 'SUPERADMIN')
     OR (
         current_setting('app.current_role', true) = 'STUDENT'
         AND student_id IN (
@@ -182,9 +178,7 @@ DROP POLICY IF EXISTS fee_payments_access_policy ON fee_payments;
 CREATE POLICY fee_payments_access_policy ON fee_payments
 FOR ALL
 USING (
-    current_setting('app.current_role', true) IS NULL
-    OR current_setting('app.current_role', true) = ''
-    OR current_setting('app.current_role', true) IN ('TEACHER', 'ADMIN', 'SUPERADMIN')
+    current_setting('app.current_role', true) IN ('TEACHER', 'ADMIN', 'SUPERADMIN')
     OR (
         current_setting('app.current_role', true) = 'STUDENT'
         AND student_id IN (
@@ -207,9 +201,7 @@ DROP POLICY IF EXISTS parent_student_links_access_policy ON parent_student_links
 CREATE POLICY parent_student_links_access_policy ON parent_student_links
 FOR ALL
 USING (
-    current_setting('app.current_role', true) IS NULL
-    OR current_setting('app.current_role', true) = ''
-    OR current_setting('app.current_role', true) IN ('ADMIN', 'SUPERADMIN')
+    current_setting('app.current_role', true) IN ('ADMIN', 'SUPERADMIN')
     OR (
         current_setting('app.current_role', true) = 'PARENT'
         AND parent_user_id = NULLIF(current_setting('app.current_user_id', true), '')::INT

@@ -5,67 +5,98 @@ import {
   Award, Target, Heart, Link
 } from 'lucide-react';
 
-// ─── School Configuration ─────────────────────────────────────────────────────
+// ─── School Configuration (PLACEHOLDERS) ──────────────────────────────────────
+// NOTE: Flagged placeholders below can be replaced with the real school's actual details.
 const SCHOOL = {
+  // PLACEHOLDER: Replace with actual school name
   name: 'Pinnacle Heights Academy',
+  // PLACEHOLDER: Replace with actual school tagline/mission slogan
   tagline: 'Nurturing Excellence, Building Futures',
+  // PLACEHOLDER: Replace with actual school motto
   motto: '"Knowledge · Character · Service"',
+  // PLACEHOLDER: Replace with year school was founded (number)
   established: 1998,
+  // PLACEHOLDER: Replace with physical street address
   address: '14 Excellence Boulevard, Lekki Phase 1, Lagos State, Nigeria',
+  // PLACEHOLDER: Replace with primary office phone number
   phone: '+234 (0) 801 234 5678',
+  // PLACEHOLDER: Replace with secondary phone / admissions line
   phone2: '+234 (0) 901 234 5678',
+  // PLACEHOLDER: Replace with main official email address
   email: 'info@pinnacleheights.edu.ng',
+  // PLACEHOLDER: Replace with admissions department email address
   admissions: 'admissions@pinnacleheights.edu.ng',
+  // PLACEHOLDER: Replace with Principal / Head of School name and qualifications
   principalName: 'Mrs. Adaora Nwosu, M.Ed.',
+  // PLACEHOLDER: Replace with official accreditation bodies / affiliations
   accreditation: 'Fully accredited by WAEC · NECO · Lagos State Ministry of Education',
 };
 
+// PLACEHOLDER: Replace with actual school statistics and impact metrics
 const STATS = [
+  // PLACEHOLDER: Total enrolled students count
   { value: '2,400+', label: 'Enrolled Students', icon: Users },
+  // PLACEHOLDER: Exam / WAEC success pass rate
   { value: '98%', label: 'WAEC Pass Rate', icon: Trophy },
+  // PLACEHOLDER: Total teaching & non-teaching staff
   { value: '120+', label: 'Qualified Staff', icon: Star },
+  // PLACEHOLDER: Years of operation / excellence
   { value: '26', label: 'Years of Excellence', icon: Award },
 ];
 
+// PLACEHOLDER: Replace with actual school features, tracks, facilities, and programs
 const FEATURES = [
   {
     icon: BookOpen,
+    // PLACEHOLDER: Feature title
     title: 'Robust Curriculum',
+    // PLACEHOLDER: Feature description
     desc: 'Junior and Senior Secondary curriculum aligned with NERDC standards, offering Sciences, Arts, Commercial and Technical tracks.',
     color: 'bg-blue-50 text-blue-600',
   },
   {
     icon: Trophy,
+    // PLACEHOLDER: Feature title
     title: 'Award-Winning Sports',
+    // PLACEHOLDER: Feature description
     desc: 'State and national championships in football, athletics, basketball and table tennis. Olympians trained here.',
     color: 'bg-emerald-50 text-emerald-600',
   },
   {
     icon: Shield,
+    // PLACEHOLDER: Feature title
     title: 'Safe & Secure Campus',
+    // PLACEHOLDER: Feature description
     desc: '24/7 CCTV surveillance, gated compound, trained security personnel and a full-time nurse on duty every day.',
     color: 'bg-purple-50 text-purple-600',
   },
   {
     icon: Globe,
+    // PLACEHOLDER: Feature title
     title: 'ICT & STEM Labs',
+    // PLACEHOLDER: Feature description
     desc: 'Modern computer labs, robotics bay, science labs with up-to-date equipment and high-speed campus Wi-Fi.',
     color: 'bg-orange-50 text-orange-600',
   },
   {
     icon: Heart,
+    // PLACEHOLDER: Feature title
     title: 'Student Wellbeing',
+    // PLACEHOLDER: Feature description
     desc: 'Licensed school counsellors, a health bay, active peer-mentorship programmes and mental health awareness campaigns.',
     color: 'bg-rose-50 text-rose-600',
   },
   {
     icon: Target,
+    // PLACEHOLDER: Feature title
     title: 'Extra-Curricular Clubs',
+    // PLACEHOLDER: Feature description
     desc: '30+ clubs including debate, drama, press, coding, chess, Red Cross, music and cultural dance troupes.',
     color: 'bg-amber-50 text-amber-600',
   },
 ];
 
+// PLACEHOLDER: Replace with actual school announcements and news articles
 const NEWS = [
   {
     date: 'Sep 15, 2026',
@@ -87,6 +118,7 @@ const NEWS = [
   },
 ];
 
+// PLACEHOLDER: Classes offered by the school
 const CLASSES = ['JSS 1', 'JSS 2', 'JSS 3', 'SS 1', 'SS 2', 'SS 3'];
 
 // ─── Nav ──────────────────────────────────────────────────────────────────────
@@ -485,10 +517,17 @@ function Contact() {
 
             {/* Social */}
             <div className="flex gap-3 pt-2">
-              {[Facebook, Twitter, Youtube, Instagram].map((Icon, i) => (
-                <a key={i} href="#"
+              {[
+                { name: 'Facebook', svg: <path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z" /> },
+                { name: 'Twitter', svg: <path d="M22 4s-.7 2.1-2 3.4c1.6 10-9.4 17.3-18 11.6 2.2.1 4.4-.6 6-2C3 15.5.5 9.6 3 5c2.2 2.6 5.6 4.1 9 4-.9-4.2 4-6.6 7-3.8 1.1 0 3-1.2 3-1.2z" /> },
+                { name: 'YouTube', svg: <path d="M22.54 6.42a2.78 2.78 0 0 0-1.94-2C18.88 4 12 4 12 4s-6.88 0-8.6.46a2.78 2.78 0 0 0-1.94 2A29 29 0 0 0 1 11.75a29 29 0 0 0 .46 5.33A2.78 2.78 0 0 0 3.4 19c1.72.46 8.6.46 8.6.46s6.88 0 8.6-.46a2.78 2.78 0 0 0 1.94-2 29 29 0 0 0 .46-5.25 29 29 0 0 0-.46-5.33z" /> },
+                { name: 'Instagram', svg: <g><rect width="20" height="20" x="2" y="2" rx="5" ry="5" /><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z" /><line x1="17.5" x2="17.51" y1="6.5" y2="6.5" /></g> }
+              ].map((item, i) => (
+                <a key={i} href="#" aria-label={item.name}
                   className="bg-white border border-slate-200 hover:bg-blue-700 hover:border-blue-700 hover:text-white text-slate-500 p-2.5 rounded-xl transition">
-                  <Icon className="h-4 w-4" />
+                  <svg className="h-4 w-4 fill-none stroke-current" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+                    {item.svg}
+                  </svg>
                 </a>
               ))}
             </div>

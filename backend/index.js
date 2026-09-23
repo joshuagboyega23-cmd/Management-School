@@ -661,9 +661,9 @@ app.post('/api/auth/login', validate(schemas.login), async (req, res) => {
 // 2. STUDENT & REPORT CARD MODULE
 // =============================================================
 
-app.get('/api/students', async (req, res) => {
+app.get('/api/students', verifyToken, requireRole('ADMIN', 'SUPERADMIN', 'TEACHER'), async (req, res) => {
   try {
-    const students = await pool.query(
+    const students = await req.db.query(
       `SELECT s.id, s.admission_number AS admission_no, 
               COALESCE(u.full_name, s.full_name) AS name, 
               u.email, 
@@ -831,6 +831,56 @@ app.get('/api/report-cards/student/:studentId', verifyToken, async (req, res) =>
     }));
 
     res.json({ success: true, data: formattedData });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// GET /api/student/me: returns authenticated student's profile, grades, and payments
+app.get('/api/student/me', verifyToken, requireRole('STUDENT'), async (req, res) => {
+  try {
+    const studentRes = await (req.db || pool).query(
+      `SELECT s.id, s.full_name, s.admission_number, s.date_of_birth, s.guardian_phone,
+              c.name AS class_name, c.level AS class_level
+       FROM students s
+       LEFT JOIN classes c ON s.class_id = c.id
+       WHERE s.user_id = $1`,
+      [req.user.id]
+    );
+
+    if (studentRes.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Student profile not found.' });
+    }
+
+    const student = studentRes.rows[0];
+
+    const reportCardsRes = await (req.db || pool).query(
+      `SELECT id, subject, term, ca_score, exam_score, total_score, grade, created_at
+       FROM report_cards
+       WHERE student_id = $1
+       ORDER BY created_at DESC`,
+      [student.id]
+    );
+
+    const paymentsRes = await (req.db || pool).query(
+      `SELECT id, amount, reference, status, term, created_at
+       FROM fee_payments
+       WHERE student_id = $1
+       ORDER BY created_at DESC`,
+      [student.id]
+    );
+
+    res.json({
+      success: true,
+      data: {
+        student,
+        reportCards: reportCardsRes.rows.map(rc => ({
+          ...rc,
+          remark: calculateGradeAndRemark(rc.total_score).remark
+        })),
+        payments: paymentsRes.rows
+      }
+    });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
