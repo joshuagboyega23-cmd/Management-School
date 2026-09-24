@@ -157,14 +157,17 @@ const dateField = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY-
 const schemas = {
   login: z.object({
     email: emailField,
-    password: z.string().min(1, 'Password is required')
+    password: z.string().min(1, 'Password is required'),
+    portal: z.enum(['student-parent', 'teacher', 'admin'], {
+      errorMap: () => ({ message: "Portal must be 'student-parent', 'teacher', or 'admin'" })
+    })
   }),
 
   adminRegister: z.object({
     full_name: z.string().min(2, 'Full name must be at least 2 characters'),
     email: emailField,
     password: passwordField,
-    role: z.enum(['ADMIN', 'TEACHER'], { errorMap: () => ({ message: "Role must be 'ADMIN' or 'TEACHER'" }) })
+    role: z.enum(['ADMIN'], { errorMap: () => ({ message: "Role must be 'ADMIN'" }) })
   }),
 
   studentSelfRegister: z.object({
@@ -277,18 +280,18 @@ app.get('/', (req, res) => {
 // 1. AUTHENTICATION MODULE
 // =============================================================
 
-// Admin direct-create flow: restricted to ADMIN and TEACHER accounts only
+// Admin direct-create flow: restricted to ADMIN accounts only
 app.post('/api/auth/register', verifyToken, requireRole('ADMIN', 'SUPERADMIN'), validate(schemas.adminRegister), async (req, res) => {
-  const { full_name, email, password, role, staff_id, subjects_taught } = req.body;
+  const { full_name, email, password, role } = req.body;
 
   if (!full_name || !email || !password || !role) {
     return res.status(400).json({ success: false, message: 'full_name, email, password, and role are required.' });
   }
 
-  if (!['ADMIN', 'TEACHER'].includes(role)) {
+  if (role !== 'ADMIN') {
     return res.status(400).json({
       success: false,
-      message: 'Direct account creation is restricted to ADMIN and TEACHER roles only. Students and parents must register using their admission number.'
+      message: 'Direct account creation is restricted to ADMIN role only. Teachers must register using their Staff ID.'
     });
   }
 
@@ -306,25 +309,16 @@ app.post('/api/auth/register', verifyToken, requireRole('ADMIN', 'SUPERADMIN'), 
 
     const newUser = await client.query(
       `INSERT INTO users (full_name, email, password_hash, role) 
-       VALUES ($1, $2, $3, $4) 
+       VALUES ($1, $2, $3, 'ADMIN') 
        RETURNING id, full_name, email, role, created_at`,
-      [full_name, email, hashedPassword, role]
+      [full_name, email, hashedPassword]
     );
-
-    if (role === 'TEACHER') {
-      const generatedStaffId = staff_id || `STF-${Date.now().toString().slice(-4)}`;
-      await client.query(
-        `INSERT INTO teachers (user_id, staff_id, subjects_taught)
-         VALUES ($1, $2, $3)`,
-        [newUser.rows[0].id, generatedStaffId, subjects_taught || []]
-      );
-    }
 
     await client.query('COMMIT');
 
     res.status(201).json({
       success: true,
-      message: `${role} account created successfully`,
+      message: 'Admin account created successfully',
       user: newUser.rows[0]
     });
   } catch (error) {
@@ -874,14 +868,14 @@ app.post('/api/auth/register/teacher', registrationLimiter, validate(schemas.tea
 });
 
 app.post('/api/auth/login', validate(schemas.login), async (req, res) => {
-  const { email, password } = req.body;
+  const { email, password, portal } = req.body;
 
-  if (!email || !password) {
-    return res.status(400).json({ success: false, message: 'Email and password are required.' });
+  if (!email || !password || !portal) {
+    return res.status(400).json({ success: false, message: 'Email, password, and portal are required.' });
   }
 
   try {
-    const userResult = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+    const userResult = await pool.query('SELECT * FROM users WHERE LOWER(email) = LOWER($1)', [email.trim()]);
     if (userResult.rows.length === 0) {
       return res.status(400).json({ success: false, message: 'Invalid email or password.' });
     }
@@ -890,6 +884,19 @@ app.post('/api/auth/login', validate(schemas.login), async (req, res) => {
     const isMatch = await bcrypt.compare(password, user.password_hash);
 
     if (!isMatch) {
+      return res.status(400).json({ success: false, message: 'Invalid email or password.' });
+    }
+
+    // Role-to-Portal Authorization Guard
+    const allowedRolesByPortal = {
+      'student-parent': ['STUDENT', 'PARENT'],
+      'teacher': ['TEACHER'],
+      'admin': ['ADMIN', 'SUPERADMIN']
+    };
+
+    const allowedRoles = allowedRolesByPortal[portal] || [];
+    if (!allowedRoles.includes(user.role)) {
+      // Intentionally return identical generic error to prevent account probing
       return res.status(400).json({ success: false, message: 'Invalid email or password.' });
     }
 
@@ -1342,23 +1349,42 @@ app.post('/api/payments/initialize', verifyToken, validate(schemas.paymentInit),
   }
 });
 
-app.get('/api/payments/verify/:reference', verifyToken, async (req, res) => {
+app.get('/api/payments/verify/:reference', async (req, res) => {
   try {
     const { reference } = req.params;
 
     const response = await axios.get(
-      `https://api.paystack.co/transaction/verify/${reference}`,
+      `https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`,
       {
         headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` }
       }
     );
 
-    if (response.data.data.status === 'success') {
-      const result = await (req.db || pool).query(
+    const paystackData = response.data?.data;
+    const paystackStatus = paystackData?.status;
+
+    if (paystackStatus === 'success') {
+      const result = await pool.query(
         `UPDATE fee_payments SET status = 'SUCCESS' WHERE reference = $1 RETURNING *`,
         [reference]
       );
-      return res.json({ success: true, payment: result.rows[0] });
+      return res.json({ 
+        success: true, 
+        message: 'Payment confirmed successfully.',
+        payment: result.rows[0],
+        amount: paystackData.amount ? paystackData.amount / 100 : undefined,
+        paidAt: paystackData.paid_at
+      });
+    } else if (paystackStatus === 'failed' || paystackStatus === 'abandoned') {
+      const result = await pool.query(
+        `UPDATE fee_payments SET status = 'FAILED' WHERE reference = $1 RETURNING *`,
+        [reference]
+      );
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Payment failed or was not completed.', 
+        payment: result.rows[0] 
+      });
     }
 
     res.status(400).json({ success: false, message: 'Payment verification failed or pending.' });

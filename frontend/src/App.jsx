@@ -3,7 +3,10 @@ import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-route
 
 import LandingPage from './components/LandingPage';
 import Login from './components/Login';
+import TeacherLogin from './components/TeacherLogin';
+import AdminLogin from './components/AdminLogin';
 import Register from './components/Register';
+import PaymentVerify from './components/PaymentVerify';
 import ProtectedRoute from './components/ProtectedRoute';
 import AdminDashboard from './components/AdminDashboard';
 import StudentDashboard from './components/StudentDashboard';
@@ -17,7 +20,10 @@ export default function App() {
         {/* Public Routes */}
         <Route path="/" element={<LandingPage />} />
         <Route path="/login" element={<Login />} />
+        <Route path="/teacher-login" element={<TeacherLogin />} />
+        <Route path="/admin-login" element={<AdminLogin />} />
         <Route path="/register" element={<Register />} />
+        <Route path="/payments/verify" element={<PaymentVerify />} />
 
         {/* Protected Role-Based Routes */}
         <Route

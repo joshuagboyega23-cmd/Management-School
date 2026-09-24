@@ -300,13 +300,23 @@ export default function Register() {
             </button>
           </form>
 
-          <div className="mt-6 pt-6 border-t border-slate-700 text-center">
+          <div className="mt-6 pt-6 border-t border-slate-700 text-center space-y-2">
             <p className="text-xs text-slate-400">
               Already registered?{' '}
-              <Link to="/login" className="font-semibold text-blue-400 hover:text-blue-300">
-                Sign in to your account
+              <Link 
+                to={roleType === 'TEACHER' ? '/teacher-login' : '/login'} 
+                className="font-semibold text-blue-400 hover:text-blue-300"
+              >
+                Sign in to your {roleType === 'TEACHER' ? 'Staff' : 'Student/Parent'} account
               </Link>
             </p>
+            <div className="pt-2 flex justify-center items-center gap-3 text-xs text-slate-500">
+              <Link to="/login" className="hover:text-blue-300 transition">Student/Parent</Link>
+              <span>•</span>
+              <Link to="/teacher-login" className="hover:text-indigo-300 transition">Staff Portal</Link>
+              <span>•</span>
+              <Link to="/admin-login" className="hover:text-blue-300 transition">Admin Portal</Link>
+            </div>
           </div>
         </div>
       </div>

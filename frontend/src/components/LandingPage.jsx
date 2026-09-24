@@ -260,12 +260,24 @@ function Hero() {
           <Link
             to="/login"
             className="bg-white/10 hover:bg-white/20 backdrop-blur border border-white/20 text-white font-semibold px-8 py-4 rounded-xl text-sm transition flex items-center justify-center gap-2">
-            Staff & Admin Portal <ArrowRight className="h-4 w-4" />
+            Student & Parent Login <ArrowRight className="h-4 w-4" />
           </Link>
           <Link
             to="/register"
             className="bg-blue-600/80 hover:bg-blue-600 backdrop-blur border border-blue-400/40 text-white font-semibold px-8 py-4 rounded-xl text-sm transition flex items-center justify-center gap-2 shadow-lg">
-            Student / Parent Sign Up <ChevronRight className="h-4 w-4" />
+            Register with Admission No. <ChevronRight className="h-4 w-4" />
+          </Link>
+        </div>
+
+        {/* Small discreet Staff & Admin Portal links */}
+        <div className="mt-6 flex items-center justify-center gap-4 text-xs text-blue-300/80">
+          <span className="text-blue-300/60 font-medium">Faculty & Staff:</span>
+          <Link to="/teacher-login" className="hover:text-white underline transition">
+            Teacher Portal
+          </Link>
+          <span>·</span>
+          <Link to="/admin-login" className="hover:text-white underline transition">
+            Admin Portal
           </Link>
         </div>
       </div>
@@ -628,10 +640,16 @@ function Footer() {
               </li>
             ))}
             <li>
-              <Link to="/login" className="hover:text-white transition">Admin & Staff Portal</Link>
+              <Link to="/login" className="hover:text-white transition">Student & Parent Portal</Link>
             </li>
             <li>
               <Link to="/register" className="hover:text-white transition">Student & Parent Registration</Link>
+            </li>
+            <li className="pt-2 border-t border-blue-900/60">
+              <Link to="/teacher-login" className="hover:text-yellow-300 text-blue-300 text-xs transition">Teacher & Staff Portal →</Link>
+            </li>
+            <li>
+              <Link to="/admin-login" className="hover:text-yellow-300 text-blue-300 text-xs transition">Admin Console Access →</Link>
             </li>
           </ul>
         </div>
