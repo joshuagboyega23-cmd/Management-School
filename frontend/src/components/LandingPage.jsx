@@ -170,15 +170,21 @@ function Navbar({ onEnterPortal }) {
         <div className="hidden md:flex items-center gap-3">
           <Link
             to="/login"
-            className="bg-blue-700 hover:bg-blue-800 text-white text-sm font-semibold px-4 py-2 rounded-lg transition flex items-center gap-2 shadow"
+            className="text-slate-700 hover:text-blue-700 text-xs font-semibold px-3 py-2 rounded-lg transition"
           >
-            Portal Login <ArrowRight className="h-4 w-4" />
+            Student & Parent Login
           </Link>
           <Link
-            to="/register"
-            className="bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold px-3 py-2 rounded-lg transition"
+            to="/teacher-login"
+            className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3.5 py-2 rounded-lg transition flex items-center gap-1.5 shadow"
           >
-            Register
+            Teacher Login
+          </Link>
+          <Link
+            to="/admin-login"
+            className="bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold px-3.5 py-2 rounded-lg transition flex items-center gap-1.5 shadow"
+          >
+            Admin Portal
           </Link>
         </div>
 
@@ -203,14 +209,21 @@ function Navbar({ onEnterPortal }) {
             onClick={() => setOpen(false)}
             className="bg-blue-700 text-white text-sm font-semibold px-5 py-2.5 rounded-lg text-center"
           >
-            Portal Login
+            Student & Parent Portal
           </Link>
           <Link
-            to="/register"
+            to="/teacher-login"
             onClick={() => setOpen(false)}
-            className="bg-slate-100 text-slate-800 text-sm font-semibold px-5 py-2.5 rounded-lg text-center"
+            className="bg-indigo-600 text-white text-sm font-semibold px-5 py-2.5 rounded-lg text-center"
           >
-            Student / Parent Register
+            Teacher Portal Login
+          </Link>
+          <Link
+            to="/admin-login"
+            onClick={() => setOpen(false)}
+            className="bg-slate-900 text-white text-sm font-semibold px-5 py-2.5 rounded-lg text-center"
+          >
+            Admin Portal
           </Link>
         </div>
       )}
@@ -254,30 +267,30 @@ function Hero() {
 
         <div className="flex flex-col sm:flex-row gap-4 justify-center">
           <a href="#admissions"
-            className="bg-yellow-400 hover:bg-yellow-300 text-blue-950 font-bold px-8 py-4 rounded-xl text-sm transition flex items-center justify-center gap-2 shadow-lg">
+            className="bg-yellow-400 hover:bg-yellow-300 text-blue-950 font-bold px-7 py-3.5 rounded-xl text-sm transition flex items-center justify-center gap-2 shadow-lg">
             Apply for Admission <ChevronRight className="h-4 w-4" />
           </a>
           <Link
-            to="/login"
-            className="bg-white/10 hover:bg-white/20 backdrop-blur border border-white/20 text-white font-semibold px-8 py-4 rounded-xl text-sm transition flex items-center justify-center gap-2">
-            Student & Parent Login <ArrowRight className="h-4 w-4" />
+            to="/admin-login"
+            className="bg-white/10 hover:bg-white/20 backdrop-blur border border-white/20 text-white font-semibold px-7 py-3.5 rounded-xl text-sm transition flex items-center justify-center gap-2">
+            Admin Portal Sign In <ArrowRight className="h-4 w-4" />
           </Link>
           <Link
-            to="/register"
-            className="bg-blue-600/80 hover:bg-blue-600 backdrop-blur border border-blue-400/40 text-white font-semibold px-8 py-4 rounded-xl text-sm transition flex items-center justify-center gap-2 shadow-lg">
-            Register with Admission No. <ChevronRight className="h-4 w-4" />
+            to="/teacher-login"
+            className="bg-indigo-600 hover:bg-indigo-500 backdrop-blur border border-indigo-400/40 text-white font-semibold px-7 py-3.5 rounded-xl text-sm transition flex items-center justify-center gap-2 shadow-lg">
+            Teacher Portal Login <ChevronRight className="h-4 w-4" />
           </Link>
         </div>
 
-        {/* Small discreet Staff & Admin Portal links */}
-        <div className="mt-6 flex items-center justify-center gap-4 text-xs text-blue-300/80">
-          <span className="text-blue-300/60 font-medium">Faculty & Staff:</span>
-          <Link to="/teacher-login" className="hover:text-white underline transition">
-            Teacher Portal
+        {/* Discreet Student & Parent Portal link */}
+        <div className="mt-6 flex items-center justify-center gap-3 text-xs text-blue-300/80">
+          <span className="text-blue-300/60 font-medium">Students & Parents:</span>
+          <Link to="/login" className="hover:text-white underline transition">
+            Student / Parent Sign In
           </Link>
           <span>·</span>
-          <Link to="/admin-login" className="hover:text-white underline transition">
-            Admin Portal
+          <Link to="/register" className="hover:text-white underline transition">
+            Register Account
           </Link>
         </div>
       </div>

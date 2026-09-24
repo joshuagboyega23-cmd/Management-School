@@ -1,45 +1,32 @@
 import React, { useState } from 'react';
-import { Plus, X, Calendar, User, Mail, BookOpen, Trash2, CheckCircle, Copy, AlertCircle } from 'lucide-react';
+import { Plus, X, Calendar, User, Mail, BookOpen, CheckCircle, Copy, AlertCircle, ShieldCheck } from 'lucide-react';
 
 export default function StaffModule({ teachers, loading, onImportTeachers }) {
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [importResults, setImportResults] = useState(null);
+  const [generatedResult, setGeneratedResult] = useState(null);
   const [copiedId, setCopiedId] = useState('');
 
-  const [staffRows, setStaffRows] = useState([
-    { fullName: '', dateOfBirth: '', email: '', subjectsTaught: '' }
-  ]);
-
-  const handleAddRow = () => {
-    setStaffRows([
-      ...staffRows,
-      { fullName: '', dateOfBirth: '', email: '', subjectsTaught: '' }
-    ]);
-  };
-
-  const handleRemoveRow = (index) => {
-    if (staffRows.length === 1) return;
-    setStaffRows(staffRows.filter((_, i) => i !== index));
-  };
-
-  const handleRowChange = (index, field, value) => {
-    const updated = [...staffRows];
-    updated[index][field] = value;
-    setStaffRows(updated);
-  };
+  const [teacherForm, setTeacherForm] = useState({
+    fullName: '',
+    dateOfBirth: '',
+    email: '',
+    subjectsTaught: ''
+  });
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    const payload = staffRows.map((r) => ({
-      fullName: r.fullName.trim(),
-      dateOfBirth: r.dateOfBirth,
-      email: r.email.trim(),
-      subjectsTaught: r.subjectsTaught ? r.subjectsTaught.split(',').map((s) => s.trim()).filter(Boolean) : []
-    }));
+    const payload = [{
+      fullName: teacherForm.fullName.trim(),
+      dateOfBirth: teacherForm.dateOfBirth,
+      email: teacherForm.email.trim(),
+      subjectsTaught: teacherForm.subjectsTaught ? teacherForm.subjectsTaught.split(',').map((s) => s.trim()).filter(Boolean) : []
+    }];
 
     onImportTeachers(payload, (createdTeachers) => {
-      setImportResults(createdTeachers);
-      setStaffRows([{ fullName: '', dateOfBirth: '', email: '', subjectsTaught: '' }]);
+      if (Array.isArray(createdTeachers) && createdTeachers.length > 0) {
+        setGeneratedResult(createdTeachers[0]);
+      }
+      setTeacherForm({ fullName: '', dateOfBirth: '', email: '', subjectsTaught: '' });
     });
   };
 
@@ -56,13 +43,13 @@ export default function StaffModule({ teachers, loading, onImportTeachers }) {
       <div className="flex justify-between items-center mb-6">
         <div>
           <h3 className="text-lg font-bold text-gray-800">Staff Management</h3>
-          <p className="text-xs text-gray-500">Official teacher roster, pre-loaded records & generated Staff IDs</p>
+          <p className="text-xs text-gray-500">Official teacher roster and pre-loaded Staff ID codes</p>
         </div>
         <button 
-          onClick={() => { setIsModalOpen(true); setImportResults(null); }}
+          onClick={() => { setIsModalOpen(true); setGeneratedResult(null); }}
           className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-4 py-2.5 rounded-lg flex items-center gap-2 transition shadow"
         >
-          <Plus className="h-4 w-4" /> Pre-load & Import Staff
+          <Plus className="h-4 w-4" /> Add Teacher
         </button>
       </div>
 
@@ -104,7 +91,7 @@ export default function StaffModule({ teachers, loading, onImportTeachers }) {
                       {Array.isArray(teacher.subjects_taught) && teacher.subjects_taught.length > 0 ? (
                         <div className="flex flex-wrap gap-1">
                           {teacher.subjects_taught.map((s, idx) => (
-                            <span key={idx} className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded text-xs">
+                            <span key={idx} className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded text-xs font-medium">
                               {s}
                             </span>
                           ))}
@@ -127,7 +114,7 @@ export default function StaffModule({ teachers, loading, onImportTeachers }) {
               ) : (
                 <tr>
                   <td colSpan="6" className="py-10 text-center text-gray-400">
-                    No staff records found. Click <strong>"Pre-load & Import Staff"</strong> to add teachers and generate Staff IDs.
+                    No staff records found in database. Click <strong>"Add Teacher"</strong> to enrol a teacher and generate a Staff ID.
                   </td>
                 </tr>
               )}
@@ -136,75 +123,81 @@ export default function StaffModule({ teachers, loading, onImportTeachers }) {
         </div>
       )}
 
-      {/* MODAL: STAFF IMPORT & GENERATED CODES */}
+      {/* ADD TEACHER MODAL & GENERATED STAFF ID POPUP */}
       {isModalOpen && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex justify-center items-center p-4 z-50 overflow-y-auto">
-          <div className="bg-white w-full max-w-2xl rounded-2xl p-6 shadow-2xl border border-gray-200 my-8">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex justify-center items-center p-4 z-50">
+          <div className="bg-white w-full max-w-md rounded-2xl p-6 shadow-2xl border border-gray-200">
             <div className="flex justify-between items-center mb-4 pb-3 border-b border-gray-100">
               <div>
                 <h3 className="text-lg font-bold text-gray-800">
-                  {importResults ? 'Generated Staff IDs' : 'Pre-load & Import Staff'}
+                  {generatedResult ? 'Staff ID Generated!' : 'Add New Teacher'}
                 </h3>
                 <p className="text-xs text-gray-500">
-                  {importResults
-                    ? 'Distribute these Staff IDs to teachers so they can complete registration'
-                    : 'Add teacher details to auto-generate official Staff IDs (PHA-STF-YYYY-NNNN)'}
+                  {generatedResult
+                    ? 'Give this Staff ID to the teacher to complete their registration'
+                    : 'Pre-loads teacher records and auto-generates official Staff ID (PHA-STF-YYYY-NNNN)'}
                 </p>
               </div>
               <button 
-                onClick={() => { setIsModalOpen(false); setImportResults(null); }}
+                onClick={() => { setIsModalOpen(false); setGeneratedResult(null); }}
                 className="text-gray-400 hover:text-gray-600 p-1"
               >
                 <X className="h-5 w-5" />
               </button>
             </div>
 
-            {importResults ? (
+            {generatedResult ? (
               <div className="space-y-4">
-                <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 flex items-center gap-3 text-emerald-800 text-sm">
-                  <CheckCircle className="h-5 w-5 text-emerald-600 shrink-0" />
-                  <span>
-                    Successfully pre-loaded {importResults.length} staff member(s). Share the generated Staff IDs below with the respective teachers:
-                  </span>
+                <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 flex items-start gap-3 text-emerald-800 text-xs leading-relaxed">
+                  <CheckCircle className="h-5 w-5 text-emerald-600 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-bold block text-sm mb-0.5">Teacher Pre-Enrolled Successfully!</span>
+                    Share this unique Staff ID with the teacher. They will use it along with their Date of Birth and Email to create their portal account.
+                  </div>
                 </div>
 
-                <div className="border border-gray-200 rounded-xl overflow-hidden">
-                  <table className="w-full text-left text-xs">
-                    <thead className="bg-slate-50 text-slate-600 border-b border-gray-200">
-                      <tr>
-                        <th className="p-3 font-semibold">Teacher Name</th>
-                        <th className="p-3 font-semibold">Generated Staff ID</th>
-                        <th className="p-3 font-semibold">Registered Email</th>
-                        <th className="p-3 font-semibold">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100">
-                      {importResults.map((t, idx) => (
-                        <tr key={idx} className="hover:bg-slate-50">
-                          <td className="p-3 font-medium text-slate-800">{t.full_name}</td>
-                          <td className="p-3 font-mono font-bold text-blue-600">{t.staff_id}</td>
-                          <td className="p-3 text-slate-500">{t.email}</td>
-                          <td className="p-3">
-                            <button
-                              type="button"
-                              onClick={() => handleCopy(t.staff_id)}
-                              className="text-blue-600 hover:text-blue-800 font-semibold flex items-center gap-1 text-xs"
-                            >
-                              <Copy className="h-3.5 w-3.5" />
-                              {copiedId === t.staff_id ? 'Copied!' : 'Copy ID'}
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div className="bg-slate-900 rounded-xl p-4 text-white space-y-3">
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs text-slate-400">Teacher Name</span>
+                    <span className="text-sm font-semibold">{generatedResult.full_name}</span>
+                  </div>
+
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs text-slate-400">Pre-loaded Email</span>
+                    <span className="text-xs text-slate-300">{generatedResult.email}</span>
+                  </div>
+
+                  <div className="pt-2 border-t border-slate-800 flex justify-between items-center">
+                    <span className="text-xs text-slate-400 font-medium">Generated Staff ID:</span>
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-base font-extrabold text-blue-400 bg-blue-950/80 px-2.5 py-1 rounded border border-blue-800">
+                        {generatedResult.staff_id}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleCopy(generatedResult.staff_id)}
+                        className="bg-blue-600 hover:bg-blue-500 text-white p-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 transition"
+                        title="Copy Staff ID"
+                      >
+                        <Copy className="h-4 w-4" />
+                        <span>{copiedId === generatedResult.staff_id ? 'Copied!' : 'Copy'}</span>
+                      </button>
+                    </div>
+                  </div>
                 </div>
 
-                <div className="pt-3 flex justify-end">
+                <div className="pt-2 flex gap-3">
                   <button
                     type="button"
-                    onClick={() => { setIsModalOpen(false); setImportResults(null); }}
-                    className="px-5 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition"
+                    onClick={() => { setGeneratedResult(null); }}
+                    className="flex-1 py-2.5 border border-gray-300 rounded-lg text-xs font-semibold text-gray-700 hover:bg-gray-50 transition"
+                  >
+                    + Add Another Teacher
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setIsModalOpen(false); setGeneratedResult(null); }}
+                    className="flex-1 py-2.5 bg-blue-600 text-white rounded-lg text-xs font-semibold hover:bg-blue-700 transition shadow"
                   >
                     Done
                   </button>
@@ -212,83 +205,71 @@ export default function StaffModule({ teachers, loading, onImportTeachers }) {
               </div>
             ) : (
               <form onSubmit={handleSubmit} className="space-y-4">
-                <div className="max-h-96 overflow-y-auto space-y-4 pr-1">
-                  {staffRows.map((row, index) => (
-                    <div key={index} className="p-4 bg-slate-50 rounded-xl border border-slate-200 relative space-y-3">
-                      <div className="flex justify-between items-center">
-                        <span className="text-xs font-bold text-slate-700">Staff Member #{index + 1}</span>
-                        {staffRows.length > 1 && (
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveRow(index)}
-                            className="text-red-500 hover:text-red-700 p-1"
-                            title="Remove row"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        )}
-                      </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <div>
-                          <label className="block text-xs font-semibold text-gray-700 mb-1">Full Name *</label>
-                          <input
-                            type="text"
-                            value={row.fullName}
-                            onChange={(e) => handleRowChange(index, 'fullName', e.target.value)}
-                            placeholder="e.g. Mr. Babatunde Johnson"
-                            required
-                            className="w-full p-2 border border-gray-300 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 bg-white"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-xs font-semibold text-gray-700 mb-1">Email Address *</label>
-                          <input
-                            type="email"
-                            value={row.email}
-                            onChange={(e) => handleRowChange(index, 'email', e.target.value)}
-                            placeholder="teacher@school.edu.ng"
-                            required
-                            className="w-full p-2 border border-gray-300 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 bg-white"
-                          />
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <div>
-                          <label className="block text-xs font-semibold text-gray-700 mb-1">Date of Birth *</label>
-                          <input
-                            type="date"
-                            value={row.dateOfBirth}
-                            onChange={(e) => handleRowChange(index, 'dateOfBirth', e.target.value)}
-                            required
-                            className="w-full p-2 border border-gray-300 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 bg-white"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-xs font-semibold text-gray-700 mb-1">Subjects Taught (comma-separated)</label>
-                          <input
-                            type="text"
-                            value={row.subjectsTaught}
-                            onChange={(e) => handleRowChange(index, 'subjectsTaught', e.target.value)}
-                            placeholder="e.g. Mathematics, Physics"
-                            className="w-full p-2 border border-gray-300 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 bg-white"
-                          />
-                        </div>
-                      </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">Teacher Full Name *</label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
+                      <User className="h-4 w-4" />
                     </div>
-                  ))}
+                    <input
+                      type="text"
+                      value={teacherForm.fullName}
+                      onChange={(e) => setTeacherForm({ ...teacherForm, fullName: e.target.value })}
+                      placeholder="e.g. Mr. Babatunde Johnson"
+                      required
+                      className="w-full pl-10 pr-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                    />
+                  </div>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={handleAddRow}
-                  className="w-full py-2 border-2 border-dashed border-slate-300 hover:border-blue-500 text-slate-600 hover:text-blue-600 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition bg-white"
-                >
-                  <Plus className="h-4 w-4" /> Add Another Staff Row
-                </button>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">Date of Birth *</label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
+                      <Calendar className="h-4 w-4" />
+                    </div>
+                    <input
+                      type="date"
+                      value={teacherForm.dateOfBirth}
+                      onChange={(e) => setTeacherForm({ ...teacherForm, dateOfBirth: e.target.value })}
+                      required
+                      className="w-full pl-10 pr-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">Teacher Email Address *</label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
+                      <Mail className="h-4 w-4" />
+                    </div>
+                    <input
+                      type="email"
+                      value={teacherForm.email}
+                      onChange={(e) => setTeacherForm({ ...teacherForm, email: e.target.value })}
+                      placeholder="teacher@pinnacleheights.edu.ng"
+                      required
+                      className="w-full pl-10 pr-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">Subjects Taught (comma-separated)</label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
+                      <BookOpen className="h-4 w-4" />
+                    </div>
+                    <input
+                      type="text"
+                      value={teacherForm.subjectsTaught}
+                      onChange={(e) => setTeacherForm({ ...teacherForm, subjectsTaught: e.target.value })}
+                      placeholder="e.g. Mathematics, Physics"
+                      className="w-full pl-10 pr-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                    />
+                  </div>
+                </div>
 
                 <div className="flex gap-3 pt-3 border-t border-gray-100">
                   <button
@@ -302,7 +283,7 @@ export default function StaffModule({ teachers, loading, onImportTeachers }) {
                     type="submit"
                     className="flex-1 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition shadow"
                   >
-                    Generate Staff IDs ({staffRows.length})
+                    Generate Staff ID
                   </button>
                 </div>
               </form>
@@ -313,4 +294,3 @@ export default function StaffModule({ teachers, loading, onImportTeachers }) {
     </div>
   );
 }
-
