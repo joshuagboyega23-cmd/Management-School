@@ -1,16 +1,17 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { GraduationCap, Lock, Mail, User, Calendar, Hash, ArrowLeft, UserPlus, AlertCircle, Heart } from 'lucide-react';
+import { GraduationCap, Lock, Mail, User, Calendar, Hash, ArrowLeft, UserPlus, AlertCircle, Heart, BookOpen } from 'lucide-react';
 import API from '../opi';
 
 export default function Register() {
   const navigate = useNavigate();
-  const [roleType, setRoleType] = useState('STUDENT'); // 'STUDENT' | 'PARENT'
+  const [roleType, setRoleType] = useState('STUDENT'); // 'STUDENT' | 'PARENT' | 'TEACHER'
   const [formData, setFormData] = useState({
     fullName: '',
     email: '',
     password: '',
     admissionNumber: '',
+    staffId: '',
     dateOfBirth: '',
     relationship: 'Parent',
   });
@@ -43,6 +44,15 @@ export default function Register() {
           ...payload,
           relationship: formData.relationship,
         };
+      } else if (roleType === 'TEACHER') {
+        endpoint = '/auth/register/teacher';
+        payload = {
+          fullName: formData.fullName,
+          email: formData.email,
+          password: formData.password,
+          staffId: formData.staffId,
+          dateOfBirth: formData.dateOfBirth,
+        };
       }
 
       const res = await API.post(endpoint, payload);
@@ -53,6 +63,8 @@ export default function Register() {
 
         if (roleType === 'STUDENT') {
           navigate('/student');
+        } else if (roleType === 'TEACHER') {
+          navigate('/teacher');
         } else {
           navigate('/parent');
         }
@@ -61,7 +73,9 @@ export default function Register() {
       setError(
         err.response?.data?.message ||
         err.response?.data?.error ||
-        'Registration failed. Please verify your admission details with the administration.'
+        (roleType === 'TEACHER'
+          ? 'Registration failed. Please verify your Staff ID, Date of Birth, and pre-loaded Email with school administration.'
+          : 'Registration failed. Please verify your admission details with the administration.')
       );
     } finally {
       setLoading(false);
@@ -81,7 +95,7 @@ export default function Register() {
         </div>
         <h2 className="text-3xl font-extrabold text-white tracking-tight">Portal Registration</h2>
         <p className="mt-2 text-sm text-slate-400">
-          Activate your account using your verified School Admission Number & Date of Birth
+          Activate your account using your verified credentials
         </p>
       </div>
 
@@ -92,24 +106,35 @@ export default function Register() {
             <button
               type="button"
               onClick={() => { setRoleType('STUDENT'); setError(''); }}
-              className={`flex-1 py-2 text-xs font-semibold rounded-md transition flex items-center justify-center gap-2 ${
+              className={`flex-1 py-2 text-xs font-semibold rounded-md transition flex items-center justify-center gap-1.5 ${
                 roleType === 'STUDENT'
                   ? 'bg-blue-600 text-white shadow'
                   : 'text-slate-400 hover:text-white'
               }`}
             >
-              <GraduationCap className="h-4 w-4" /> I am a Student
+              <GraduationCap className="h-4 w-4" /> Student
+            </button>
+            <button
+              type="button"
+              onClick={() => { setRoleType('TEACHER'); setError(''); }}
+              className={`flex-1 py-2 text-xs font-semibold rounded-md transition flex items-center justify-center gap-1.5 ${
+                roleType === 'TEACHER'
+                  ? 'bg-blue-600 text-white shadow'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <BookOpen className="h-4 w-4" /> Teacher
             </button>
             <button
               type="button"
               onClick={() => { setRoleType('PARENT'); setError(''); }}
-              className={`flex-1 py-2 text-xs font-semibold rounded-md transition flex items-center justify-center gap-2 ${
+              className={`flex-1 py-2 text-xs font-semibold rounded-md transition flex items-center justify-center gap-1.5 ${
                 roleType === 'PARENT'
                   ? 'bg-blue-600 text-white shadow'
                   : 'text-slate-400 hover:text-white'
               }`}
             >
-              <Heart className="h-4 w-4" /> I am a Parent / Guardian
+              <Heart className="h-4 w-4" /> Parent
             </button>
           </div>
 
@@ -123,7 +148,7 @@ export default function Register() {
           <form className="space-y-4" onSubmit={handleSubmit}>
             <div>
               <label className="block text-xs font-semibold text-slate-300 mb-1">
-                {roleType === 'STUDENT' ? 'Your Full Name' : 'Parent / Guardian Full Name'}
+                {roleType === 'STUDENT' ? 'Your Full Name' : roleType === 'TEACHER' ? 'Staff Full Name' : 'Parent / Guardian Full Name'}
               </label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
@@ -135,7 +160,7 @@ export default function Register() {
                   value={formData.fullName}
                   onChange={handleChange}
                   required
-                  placeholder={roleType === 'STUDENT' ? 'e.g. John Adeyemi' : 'e.g. Dr. Samuel Adeyemi'}
+                  placeholder={roleType === 'STUDENT' ? 'e.g. John Adeyemi' : roleType === 'TEACHER' ? 'e.g. Mr. Babatunde Johnson' : 'e.g. Dr. Samuel Adeyemi'}
                   className="w-full pl-10 pr-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-slate-500"
                 />
               </div>
@@ -184,33 +209,47 @@ export default function Register() {
               <p className="text-xs text-blue-400 font-semibold mb-3">
                 {roleType === 'STUDENT'
                   ? 'Verification: School Admission Info'
+                  : roleType === 'TEACHER'
+                  ? 'Verification: Staff ID & Birth Record'
                   : 'Verification: Student Link Details'}
               </p>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 mb-1">
-                    {roleType === 'STUDENT' ? 'Admission Number' : "Child's Admission Number"}
+                    {roleType === 'STUDENT' ? 'Admission Number' : roleType === 'TEACHER' ? 'Staff ID' : "Child's Admission Number"}
                   </label>
                   <div className="relative">
                     <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
                       <Hash className="h-4 w-4" />
                     </div>
-                    <input
-                      type="text"
-                      name="admissionNumber"
-                      value={formData.admissionNumber}
-                      onChange={handleChange}
-                      required
-                      placeholder="e.g. PHA-2026-0001"
-                      className="w-full pl-10 pr-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-slate-500 uppercase font-mono"
-                    />
+                    {roleType === 'TEACHER' ? (
+                      <input
+                        type="text"
+                        name="staffId"
+                        value={formData.staffId}
+                        onChange={handleChange}
+                        required
+                        placeholder="e.g. PHA-STF-2026-0001"
+                        className="w-full pl-10 pr-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-slate-500 uppercase font-mono"
+                      />
+                    ) : (
+                      <input
+                        type="text"
+                        name="admissionNumber"
+                        value={formData.admissionNumber}
+                        onChange={handleChange}
+                        required
+                        placeholder="e.g. PHA-2026-0001"
+                        className="w-full pl-10 pr-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-slate-500 uppercase font-mono"
+                      />
+                    )}
                   </div>
                 </div>
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 mb-1">
-                    {roleType === 'STUDENT' ? 'Date of Birth' : "Child's Date of Birth"}
+                    {roleType === 'PARENT' ? "Child's Date of Birth" : 'Date of Birth'}
                   </label>
                   <div className="relative">
                     <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
@@ -255,7 +294,7 @@ export default function Register() {
                 <span>Verifying & Registering...</span>
               ) : (
                 <>
-                  <UserPlus className="h-4 w-4" /> Create {roleType === 'STUDENT' ? 'Student' : 'Parent'} Account
+                  <UserPlus className="h-4 w-4" /> Create {roleType === 'STUDENT' ? 'Student' : roleType === 'TEACHER' ? 'Teacher' : 'Parent'} Account
                 </>
               )}
             </button>

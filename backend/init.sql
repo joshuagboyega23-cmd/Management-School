@@ -23,10 +23,24 @@ CREATE TABLE IF NOT EXISTS teachers (
     id SERIAL PRIMARY KEY,
     user_id INT REFERENCES users(id) ON DELETE CASCADE,
     staff_id VARCHAR(50) UNIQUE NOT NULL,
+    full_name VARCHAR(255) NOT NULL,
+    date_of_birth DATE NOT NULL,
+    email VARCHAR(255) UNIQUE NOT NULL,
     subjects_taught TEXT[] DEFAULT '{}',
     invite_accepted BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Idempotent column additions for existing teachers table
+ALTER TABLE teachers ADD COLUMN IF NOT EXISTS full_name VARCHAR(255);
+ALTER TABLE teachers ADD COLUMN IF NOT EXISTS date_of_birth DATE;
+ALTER TABLE teachers ADD COLUMN IF NOT EXISTS email VARCHAR(255);
+DO $$ 
+BEGIN 
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'teachers_email_key') THEN 
+        ALTER TABLE teachers ADD CONSTRAINT teachers_email_key UNIQUE (email); 
+    END IF; 
+END $$;
 
 -- 4. Classes Table
 CREATE TABLE IF NOT EXISTS classes (

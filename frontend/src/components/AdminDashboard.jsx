@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { Users, FileText, CreditCard, DollarSign, CheckCircle, GraduationCap, ArrowLeft, LogOut } from 'lucide-react';
+import { Users, UserCheck, FileText, CreditCard, CheckCircle, GraduationCap, ArrowLeft, LogOut, Menu, X } from 'lucide-react';
 
 import StudentsModule from './StudentsModule';
+import StaffModule from './StaffModule';
 import ReportsModule from './ReportsModule';
 import PaymentsModule from './PaymentsModule';
 import PayrollModule from './PayrollModule';
@@ -11,8 +12,11 @@ import API from '../opi';
 export default function AdminDashboard() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('students');
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [students, setStudents] = useState([]);
+  const [teachers, setTeachers] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [loadingStaff, setLoadingStaff] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
   const [reportData, setReportData] = useState(null);
 
@@ -31,8 +35,24 @@ export default function AdminDashboard() {
     }
   };
 
+  // Fetch Teachers
+  const fetchTeachers = async () => {
+    try {
+      setLoadingStaff(true);
+      const res = await API.get('/teachers');
+      const list = Array.isArray(res.data?.data) ? res.data.data : (Array.isArray(res.data) ? res.data : []);
+      setTeachers(list);
+    } catch (err) {
+      console.error('Error fetching teachers:', err);
+      setTeachers([]);
+    } finally {
+      setLoadingStaff(false);
+    }
+  };
+
   useEffect(() => {
     fetchStudents();
+    fetchTeachers();
   }, []);
 
   const showNotification = (type, text) => {
@@ -44,6 +64,11 @@ export default function AdminDashboard() {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
     navigate('/login');
+  };
+
+  const handleTabSelect = (tab) => {
+    setActiveTab(tab);
+    setIsSidebarOpen(false);
   };
 
   // 1. Add Student Action
@@ -58,7 +83,21 @@ export default function AdminDashboard() {
     }
   };
 
-  // 2. Submit Grade Action
+  // 2. Import Staff Action
+  const handleImportTeachers = async (teacherPayload, onSuccess) => {
+    try {
+      const res = await API.post('/auth/admin/import-teachers', teacherPayload);
+      showNotification('success', res.data?.message || 'Staff roster imported successfully!');
+      fetchTeachers();
+      if (onSuccess && res.data?.teachers) {
+        onSuccess(res.data.teachers);
+      }
+    } catch (err) {
+      showNotification('error', err.response?.data?.message || err.response?.data?.error || 'Failed to import staff');
+    }
+  };
+
+  // 3. Submit Grade Action
   const handleGradeSubmit = async (gradeForm, onSuccess) => {
     try {
       await API.post('/report-cards', gradeForm);
@@ -69,7 +108,7 @@ export default function AdminDashboard() {
     }
   };
 
-  // 3. Fetch Report Card
+  // 4. Fetch Report Card
   const handleFetchReportCard = async (studentId) => {
     if (!studentId) return;
     try {
@@ -84,7 +123,7 @@ export default function AdminDashboard() {
     }
   };
 
-  // 4. Paystack Payment Action
+  // 5. Paystack Payment Action
   const handlePaymentSubmit = async (paymentForm) => {
     try {
       const res = await API.post('/payments/initialize', paymentForm);
@@ -97,7 +136,7 @@ export default function AdminDashboard() {
     }
   };
 
-  // 5. Payroll Action
+  // 6. Payroll Action
   const handlePayrollSubmit = async (payrollForm) => {
     try {
       await API.post('/payroll/process', payrollForm);
@@ -108,41 +147,66 @@ export default function AdminDashboard() {
   };
 
   return (
-    <div className="flex h-screen bg-gray-100 font-sans">
+    <div className="flex h-screen bg-gray-100 font-sans overflow-hidden">
+      {/* Mobile Backdrop Overlay */}
+      {isSidebarOpen && (
+        <div 
+          onClick={() => setIsSidebarOpen(false)}
+          className="fixed inset-0 bg-black/50 backdrop-blur-xs z-30 md:hidden transition-opacity"
+        />
+      )}
+
       {/* Sidebar Navigation */}
-      <aside className="w-64 bg-slate-900 text-white flex flex-col p-4 shadow-lg shrink-0">
-        <div className="flex items-center gap-3 px-2 py-4 border-b border-slate-800">
-          <GraduationCap className="h-8 w-8 text-blue-400" />
-          <div>
-            <h1 className="text-base font-bold leading-tight">Pinnacle Heights</h1>
-            <p className="text-xs text-slate-400 leading-tight">Admin Portal</p>
+      <aside className={`fixed inset-y-0 left-0 z-40 w-64 bg-slate-900 text-white flex flex-col p-4 shadow-2xl md:shadow-lg shrink-0 transition-transform duration-300 ease-in-out md:static md:translate-x-0 ${
+        isSidebarOpen ? 'translate-x-0' : '-translate-x-full'
+      }`}>
+        <div className="flex items-center justify-between px-2 py-4 border-b border-slate-800">
+          <div className="flex items-center gap-3">
+            <GraduationCap className="h-8 w-8 text-blue-400" />
+            <div>
+              <h1 className="text-base font-bold leading-tight">Pinnacle Heights</h1>
+              <p className="text-xs text-slate-400 leading-tight">Admin Portal</p>
+            </div>
           </div>
+          <button
+            onClick={() => setIsSidebarOpen(false)}
+            className="md:hidden p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition"
+            aria-label="Close sidebar"
+          >
+            <X className="h-5 w-5" />
+          </button>
         </div>
 
         <nav className="mt-6 flex flex-col gap-2">
           <button 
-            onClick={() => setActiveTab('students')}
+            onClick={() => handleTabSelect('students')}
             className={`flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition ${activeTab === 'students' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-slate-800'}`}
           >
             <Users className="h-5 w-5" /> Student Records
           </button>
           <button 
-            onClick={() => setActiveTab('reports')}
+            onClick={() => handleTabSelect('staff')}
+            className={`flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition ${activeTab === 'staff' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-slate-800'}`}
+          >
+            <UserCheck className="h-5 w-5" /> Staff Management
+          </button>
+          <button 
+            onClick={() => handleTabSelect('reports')}
             className={`flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition ${activeTab === 'reports' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-slate-800'}`}
           >
             <FileText className="h-5 w-5" /> Report Cards
           </button>
           <button 
-            onClick={() => setActiveTab('payments')}
+            onClick={() => handleTabSelect('payments')}
             className={`flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition ${activeTab === 'payments' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-slate-800'}`}
           >
             <CreditCard className="h-5 w-5" /> Fee Payments
           </button>
           <button 
-            onClick={() => setActiveTab('payroll')}
+            onClick={() => handleTabSelect('payroll')}
             className={`flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition ${activeTab === 'payroll' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-slate-800'}`}
           >
-            <DollarSign className="h-5 w-5" /> Staff Payroll
+            <span className="h-5 w-5 flex items-center justify-center font-bold text-base leading-none">₦</span> Staff Payroll
           </button>
         </nav>
 
@@ -150,6 +214,7 @@ export default function AdminDashboard() {
         <div className="mt-auto pt-4 border-t border-slate-800 space-y-2">
           <Link
             to="/"
+            onClick={() => setIsSidebarOpen(false)}
             className="flex items-center gap-2 text-slate-400 hover:text-white text-xs px-2 py-2 rounded transition w-full"
           >
             <ArrowLeft className="h-4 w-4" /> Back to School Website
@@ -164,14 +229,23 @@ export default function AdminDashboard() {
       </aside>
 
       {/* Main Content Area */}
-      <main className="flex-1 overflow-y-auto p-8">
-        <header className="flex justify-between items-center mb-6 bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-          <div>
-            <h2 className="text-2xl font-bold text-gray-800 capitalize">{activeTab.replace('-', ' ')} Portal</h2>
-            <p className="text-sm text-gray-500">Pinnacle Heights Academy — Administrative Dashboard</p>
+      <main className="flex-1 overflow-y-auto p-4 sm:p-8">
+        <header className="flex justify-between items-center mb-6 bg-white p-4 sm:p-6 rounded-xl shadow-sm border border-gray-200">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setIsSidebarOpen(true)}
+              className="md:hidden p-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 transition"
+              aria-label="Open navigation menu"
+            >
+              <Menu className="h-5 w-5" />
+            </button>
+            <div>
+              <h2 className="text-xl sm:text-2xl font-bold text-gray-800 capitalize">{activeTab.replace('-', ' ')} Portal</h2>
+              <p className="text-xs sm:text-sm text-gray-500">Pinnacle Heights Academy — Administrative Dashboard</p>
+            </div>
           </div>
-          <span className="bg-emerald-100 text-emerald-800 text-xs px-3 py-1 rounded-full font-semibold flex items-center gap-1">
-            <CheckCircle className="h-3 w-3" /> Authenticated Session
+          <span className="bg-emerald-100 text-emerald-800 text-xs px-2.5 py-1 sm:px-3 rounded-full font-semibold flex items-center gap-1 shrink-0">
+            <CheckCircle className="h-3 w-3" /> <span className="hidden sm:inline">Authenticated</span> Session
           </span>
         </header>
 
@@ -188,6 +262,14 @@ export default function AdminDashboard() {
             students={students} 
             loading={loading} 
             onAddStudent={handleAddStudent} 
+          />
+        )}
+
+        {activeTab === 'staff' && (
+          <StaffModule 
+            teachers={teachers} 
+            loading={loadingStaff} 
+            onImportTeachers={handleImportTeachers} 
           />
         )}
 
@@ -209,6 +291,7 @@ export default function AdminDashboard() {
 
         {activeTab === 'payroll' && (
           <PayrollModule 
+            teachers={teachers}
             onProcessPayroll={handlePayrollSubmit} 
           />
         )}

@@ -3,7 +3,7 @@ import React, { useState } from 'react';
 export default function ReportsModule({ students, onSubmitGrade, onFetchReportCard, reportData }) {
   const [gradeForm, setGradeForm] = useState({
     studentId: '',
-    term: 'First Term 2026',
+    term: 'First Term',
     subject: 'Mathematics',
     caScore: '',
     examScore: ''
@@ -16,7 +16,12 @@ export default function ReportsModule({ students, onSubmitGrade, onFetchReportCa
 
   const handleGradeSubmit = (e) => {
     e.preventDefault();
-    onSubmitGrade(gradeForm, () => {
+    onSubmitGrade({
+      ...gradeForm,
+      studentId: Number(gradeForm.studentId),
+      caScore: Number(gradeForm.caScore),
+      examScore: Number(gradeForm.examScore)
+    }, () => {
       setGradeForm({ ...gradeForm, caScore: '', examScore: '' });
     });
   };
@@ -51,13 +56,16 @@ export default function ReportsModule({ students, onSubmitGrade, onFetchReportCa
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold text-gray-600 mb-1">Term</label>
-              <input 
-                type="text" 
+              <select 
                 value={gradeForm.term} 
                 onChange={(e) => setGradeForm({ ...gradeForm, term: e.target.value })}
                 required 
-                className="w-full p-2.5 border border-gray-300 rounded-lg text-sm"
-              />
+                className="w-full p-2.5 border border-gray-300 rounded-lg text-sm bg-white"
+              >
+                <option value="First Term">First Term</option>
+                <option value="Second Term">Second Term</option>
+                <option value="Third Term">Third Term</option>
+              </select>
             </div>
             <div>
               <label className="block text-xs font-semibold text-gray-600 mb-1">Subject</label>

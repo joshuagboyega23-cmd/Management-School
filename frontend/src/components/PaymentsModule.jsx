@@ -13,7 +13,11 @@ export default function PaymentsModule({ students, onProcessPayment }) {
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    onProcessPayment(paymentForm);
+    onProcessPayment({
+      ...paymentForm,
+      studentId: Number(paymentForm.studentId),
+      amount: Number(paymentForm.amount)
+    });
   };
 
   return (

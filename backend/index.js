@@ -184,6 +184,35 @@ const schemas = {
     relationship: z.string().optional()
   }),
 
+  teacherSelfRegister: z.object({
+    fullName: z.string().min(2, 'Full name is required'),
+    email: emailField,
+    password: passwordField,
+    staffId: z.string().min(3, 'Staff ID is required'),
+    dateOfBirth: dateField
+  }),
+
+  importTeachers: z.union([
+    z.array(
+      z.object({
+        fullName: z.string().min(2, 'Full name is required'),
+        dateOfBirth: dateField,
+        email: emailField,
+        subjectsTaught: z.union([z.array(z.string()), z.string()]).optional()
+      })
+    ).min(1, 'At least one teacher record is required'),
+    z.object({
+      teachers: z.array(
+        z.object({
+          fullName: z.string().min(2, 'Full name is required'),
+          dateOfBirth: dateField,
+          email: emailField,
+          subjectsTaught: z.union([z.array(z.string()), z.string()]).optional()
+        })
+      ).min(1, 'At least one teacher record is required')
+    })
+  ]),
+
   importStudents: z.array(
     z.object({
       fullName: z.string().min(2, 'Student full name is required'),
@@ -421,6 +450,118 @@ app.post('/api/auth/admin/import-students', verifyToken, requireRole('ADMIN', 'S
   }
 });
 
+// Admin-only: Import staff/teacher roster pre-load (JSON Array, { teachers: [...] }, or CSV text)
+app.post('/api/auth/admin/import-teachers', verifyToken, requireRole('ADMIN', 'SUPERADMIN'), validate(schemas.importTeachers), async (req, res) => {
+  let teacherList = [];
+
+  if (Array.isArray(req.body)) {
+    teacherList = req.body;
+  } else if (Array.isArray(req.body?.teachers)) {
+    teacherList = req.body.teachers;
+  } else if (typeof req.body === 'string' || req.body?.csv) {
+    const csvContent = typeof req.body === 'string' ? req.body : req.body.csv;
+    const lines = csvContent.trim().split(/\r?\n/);
+    if (lines.length > 1) {
+      const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/[^a-z0-9]/g, ''));
+      for (let i = 1; i < lines.length; i++) {
+        if (!lines[i].trim()) continue;
+        const values = lines[i].split(',').map(v => v.trim());
+        const row = {};
+        headers.forEach((h, idx) => { row[h] = values[idx]; });
+        teacherList.push({
+          fullName: row.fullname || row.name || values[0],
+          dateOfBirth: row.dateofbirth || row.dob || values[1],
+          email: row.email || values[2],
+          subjectsTaught: row.subjectstaught || row.subjects || values[3]
+        });
+      }
+    }
+  }
+
+  if (!teacherList || teacherList.length === 0) {
+    return res.status(400).json({
+      success: false,
+      message: 'No teacher records provided. Please send a JSON array or CSV text with fullName, dateOfBirth, and email.'
+    });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const currentYear = new Date().getFullYear();
+
+    // Query highest current sequence number for PHA-STF-{year}-{sequence}
+    const lastStaff = await client.query(
+      `SELECT staff_id FROM teachers 
+       WHERE staff_id LIKE $1 
+       ORDER BY id DESC LIMIT 1`,
+      [`PHA-STF-${currentYear}-%`]
+    );
+
+    let nextSeq = 1;
+    if (lastStaff.rows.length > 0) {
+      const parts = lastStaff.rows[0].staff_id.split('-');
+      const lastNum = parseInt(parts[parts.length - 1], 10);
+      if (!isNaN(lastNum)) nextSeq = lastNum + 1;
+    }
+
+    const imported = [];
+
+    for (const item of teacherList) {
+      const fullName = item.fullName || item.full_name || item.name;
+      const dateOfBirth = item.dateOfBirth || item.date_of_birth || item.dob;
+      const email = item.email;
+      const subjectsTaught = item.subjectsTaught || item.subjects_taught || item.subjects || [];
+
+      if (!fullName || !dateOfBirth || !email) {
+        throw new Error(`Missing fullName, dateOfBirth, or email for record: ${JSON.stringify(item)}`);
+      }
+
+      let subjects = [];
+      if (Array.isArray(subjectsTaught)) {
+        subjects = subjectsTaught;
+      } else if (typeof subjectsTaught === 'string') {
+        subjects = subjectsTaught.split(',').map(s => s.trim()).filter(Boolean);
+      }
+
+      // Check collision on staff_id if needed, generating unique sequence
+      let staffId = `PHA-STF-${currentYear}-${String(nextSeq++).padStart(4, '0')}`;
+      let collision = true;
+      while (collision) {
+        const existingStaff = await client.query('SELECT 1 FROM teachers WHERE staff_id = $1', [staffId]);
+        if (existingStaff.rows.length === 0) {
+          collision = false;
+        } else {
+          staffId = `PHA-STF-${currentYear}-${String(nextSeq++).padStart(4, '0')}`;
+        }
+      }
+
+      const inserted = await client.query(
+        `INSERT INTO teachers (full_name, date_of_birth, email, staff_id, subjects_taught, user_id)
+         VALUES ($1, $2, $3, $4, $5, NULL)
+         RETURNING id, full_name, email, staff_id, subjects_taught, date_of_birth`,
+        [fullName.trim(), dateOfBirth, email.trim().toLowerCase(), staffId, subjects]
+      );
+
+      imported.push(inserted.rows[0]);
+    }
+
+    await client.query('COMMIT');
+
+    res.status(201).json({
+      success: true,
+      message: `Successfully imported ${imported.length} staff records.`,
+      teachers: imported
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ success: false, error: error.message });
+  } finally {
+    client.release();
+  }
+});
+
 // Public: Student self-registration with Admission Number + DOB matching
 app.post('/api/auth/register/student', registrationLimiter, validate(schemas.studentSelfRegister), async (req, res) => {
   const { fullName, email, password, admissionNumber, dateOfBirth } = req.body;
@@ -634,6 +775,104 @@ app.post('/api/auth/register/parent', registrationLimiter, validate(schemas.pare
   }
 });
 
+// Public: Teacher self-registration with Staff ID + DOB + Email matching
+app.post('/api/auth/register/teacher', registrationLimiter, validate(schemas.teacherSelfRegister), async (req, res) => {
+  const { fullName, email, password, staffId, dateOfBirth } = req.body;
+  const clientIp = req.ip || req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown';
+
+  if (!email || !password || !staffId || !dateOfBirth) {
+    return res.status(400).json({
+      success: false,
+      message: 'Email, password, staffId, and dateOfBirth are required.'
+    });
+  }
+
+  const isValidDate = !isNaN(Date.parse(dateOfBirth));
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Look up unclaimed teacher matching staff_id, date_of_birth, and email
+    const teacherRes = await client.query(
+      `SELECT * FROM teachers 
+       WHERE LOWER(staff_id) = LOWER($1) 
+         AND date_of_birth = $2 
+         AND LOWER(email) = LOWER($3)
+         AND user_id IS NULL 
+       FOR UPDATE`,
+      [staffId.trim(), dateOfBirth, email.trim()]
+    );
+
+    if (teacherRes.rows.length === 0) {
+      // Log attempt with matched=false
+      await client.query(
+        `INSERT INTO registration_attempts (admission_number_entered, dob_entered, matched, attempted_role, ip_address)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [staffId.trim(), isValidDate ? dateOfBirth : null, false, 'TEACHER', clientIp]
+      );
+      await client.query('COMMIT');
+      return res.status(400).json({
+        success: false,
+        message: 'No matching record found. Please verify your staff credentials with the school administration.'
+      });
+    }
+
+    const teacher = teacherRes.rows[0];
+
+    // Ensure email is not already taken in users
+    const emailCheck = await client.query('SELECT id FROM users WHERE LOWER(email) = LOWER($1)', [email.trim()]);
+    if (emailCheck.rows.length > 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ success: false, message: 'Email is already registered.' });
+    }
+
+    // Create user account with role=TEACHER
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+
+    const userRes = await client.query(
+      `INSERT INTO users (full_name, email, password_hash, role)
+       VALUES ($1, $2, $3, 'TEACHER')
+       RETURNING id, full_name, email, role, created_at`,
+      [fullName || teacher.full_name, email.trim().toLowerCase(), hashedPassword]
+    );
+    const newUser = userRes.rows[0];
+
+    // Link teachers row to new user
+    await client.query(
+      `UPDATE teachers SET user_id = $1, invite_accepted = TRUE WHERE id = $2`,
+      [newUser.id, teacher.id]
+    );
+
+    // Log successful attempt
+    await client.query(
+      `INSERT INTO registration_attempts (admission_number_entered, dob_entered, matched, attempted_role, ip_address)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [staffId.trim(), dateOfBirth, true, 'TEACHER', clientIp]
+    );
+
+    await client.query('COMMIT');
+
+    const token = jwt.sign(
+      { id: newUser.id, role: newUser.role, email: newUser.email },
+      process.env.JWT_SECRET,
+      { expiresIn: '1d' }
+    );
+
+    res.status(201).json({
+      success: true,
+      message: 'Teacher account registered successfully.',
+      token,
+      user: newUser
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ success: false, error: error.message });
+  } finally {
+    client.release();
+  }
+});
+
 app.post('/api/auth/login', validate(schemas.login), async (req, res) => {
   const { email, password } = req.body;
 
@@ -696,6 +935,31 @@ app.get('/api/students', verifyToken, requireRole('ADMIN', 'SUPERADMIN', 'TEACHE
        ORDER BY s.id DESC`
     );
     res.json({ success: true, data: students.rows });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/api/teachers', verifyToken, requireRole('ADMIN', 'SUPERADMIN'), async (req, res) => {
+  try {
+    const teachers = await req.db.query(
+      `SELECT 
+         t.id AS teacher_record_id,
+         t.user_id AS id,
+         COALESCE(u.full_name, t.full_name) AS full_name,
+         COALESCE(u.email, t.email) AS email,
+         t.staff_id,
+         t.subjects_taught,
+         t.date_of_birth,
+         t.user_id,
+         (t.user_id IS NOT NULL) AS is_registered,
+         CASE WHEN t.user_id IS NOT NULL THEN 'Registered' ELSE 'Pending' END AS status,
+         t.created_at
+       FROM teachers t
+       LEFT JOIN users u ON t.user_id = u.id
+       ORDER BY t.id DESC`
+    );
+    res.json({ success: true, data: teachers.rows });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
