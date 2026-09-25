@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-
+import { Download } from 'lucide-react';
+import { downloadReportCardPDF } from '../utils/pdfUtils';
 export default function ReportsModule({ students, onSubmitGrade, onFetchReportCard, reportData }) {
   const [gradeForm, setGradeForm] = useState({
     studentId: '',
@@ -112,7 +113,20 @@ export default function ReportsModule({ students, onSubmitGrade, onFetchReportCa
 
       {/* Report Card Viewer */}
       <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-        <h3 className="text-lg font-bold text-gray-800 mb-4">View Student Report Card</h3>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-bold text-gray-800">View Student Report Card</h3>
+          {reportList.length > 0 && (() => {
+            const sel = studentList.find(s => String(s.id) === String(reportView.studentId));
+            return (
+              <button
+                onClick={() => downloadReportCardPDF(sel, reportList)}
+                className="flex items-center gap-1.5 text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-3 py-1.5 rounded-lg transition"
+              >
+                <Download className="h-3.5 w-3.5" /> Download PDF
+              </button>
+            );
+          })()}
+        </div>
         <form onSubmit={handleFetchReport} className="flex gap-3 mb-6">
           <select 
             value={reportView.studentId} 

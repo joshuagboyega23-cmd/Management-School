@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { GraduationCap, LogOut, Award, CreditCard, User, AlertCircle, FileText, CheckCircle, Clock } from 'lucide-react';
+import { GraduationCap, LogOut, Award, CreditCard, User, AlertCircle, FileText, CheckCircle, Clock, Download } from 'lucide-react';
 import API from '../opi';
+import { downloadReportCardPDF } from '../utils/pdfUtils';
 
 export default function StudentDashboard() {
   const navigate = useNavigate();
@@ -57,7 +58,7 @@ export default function StudentDashboard() {
       });
 
       if (res.data.success && res.data.paymentUrl) {
-        window.open(res.data.paymentUrl, '_blank');
+        window.location.href = res.data.paymentUrl;
         showNotification('success', 'Redirecting to Paystack checkout...');
       }
     } catch (err) {
@@ -169,9 +170,19 @@ export default function StudentDashboard() {
         {/* Tab 1: Grades */}
         {activeTab === 'grades' && (
           <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-            <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
-              <Award className="h-5 w-5 text-blue-600" /> Academic Assessment Records
-            </h3>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                <Award className="h-5 w-5 text-blue-600" /> Academic Assessment Records
+              </h3>
+              {reportCards.length > 0 && (
+                <button
+                  onClick={() => downloadReportCardPDF(student, reportCards)}
+                  className="flex items-center gap-1.5 text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-3 py-1.5 rounded-lg transition"
+                >
+                  <Download className="h-3.5 w-3.5" /> Download PDF
+                </button>
+              )}
+            </div>
 
             {reportCards.length === 0 ? (
               <p className="text-sm text-slate-500 py-6 text-center">No grades or assessments recorded yet for this session.</p>

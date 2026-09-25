@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { GraduationCap, LogOut, FileText, CheckCircle, AlertCircle, Users, BookOpen, Plus } from 'lucide-react';
+import { GraduationCap, LogOut, FileText, CheckCircle, AlertCircle, Users, BookOpen, Plus, Download } from 'lucide-react';
 import API from '../opi';
+import { downloadGradeSheetPDF } from '../utils/pdfUtils';
 
 export default function TeacherDashboard() {
   const navigate = useNavigate();
@@ -206,9 +207,22 @@ export default function TeacherDashboard() {
 
           {/* Student Report Preview */}
           <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-            <h3 className="text-lg font-bold text-slate-800 mb-2 flex items-center gap-2">
-              <FileText className="h-5 w-5 text-blue-600" /> Student Grade Sheet
-            </h3>
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                <FileText className="h-5 w-5 text-blue-600" /> Student Grade Sheet
+              </h3>
+              {reportData && reportData.length > 0 && selectedStudentId && (() => {
+                const sel = students.find(s => String(s.id) === String(selectedStudentId));
+                return (
+                  <button
+                    onClick={() => downloadGradeSheetPDF(sel, reportData)}
+                    className="flex items-center gap-1.5 text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-3 py-1.5 rounded-lg transition"
+                  >
+                    <Download className="h-3.5 w-3.5" /> Download PDF
+                  </button>
+                );
+              })()}
+            </div>
             <p className="text-xs text-slate-500 mb-4">Select a student to view their current term records</p>
 
             <div className="mb-4">

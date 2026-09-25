@@ -128,7 +128,7 @@ export default function AdminDashboard() {
     try {
       const res = await API.post('/payments/initialize', paymentForm);
       if (res.data.success && res.data.paymentUrl) {
-        window.open(res.data.paymentUrl, '_blank');
+        window.location.href = res.data.paymentUrl;
         showNotification('success', 'Redirecting to Paystack checkout...');
       }
     } catch (err) {
@@ -137,12 +137,13 @@ export default function AdminDashboard() {
   };
 
   // 6. Payroll Action
-  const handlePayrollSubmit = async (payrollForm) => {
+  const handlePayrollSubmit = async (payrollForm, onSuccess) => {
     try {
       await API.post('/payroll/process', payrollForm);
-      showNotification('success', 'Payroll processed successfully');
+      showNotification('success', 'Salary record logged successfully');
+      if (onSuccess) onSuccess();
     } catch (err) {
-      showNotification('error', err.response?.data?.error || 'Payroll processing failed');
+      showNotification('error', err.response?.data?.error || err.response?.data?.message || 'Payroll processing failed');
     }
   };
 

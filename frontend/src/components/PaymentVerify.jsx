@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { useSearchParams, useNavigate, Link } from 'react-router-dom';
-import { CheckCircle, AlertCircle, Loader2, ArrowLeft, Receipt, ExternalLink } from 'lucide-react';
+import { CheckCircle, AlertCircle, Loader2, ArrowLeft, Receipt, ExternalLink, Download } from 'lucide-react';
 import API from '../opi';
+import { downloadReceiptPDF } from '../utils/pdfUtils';
 
 export default function PaymentVerify() {
   const [searchParams] = useSearchParams();
@@ -121,12 +122,18 @@ export default function PaymentVerify() {
               </div>
             </div>
 
-            <div className="pt-2">
+            <div className="pt-2 flex flex-col gap-2">
               <button
                 onClick={() => navigate(getUserDashboardPath())}
                 className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-semibold transition shadow-md flex items-center justify-center gap-2"
               >
                 <ArrowLeft className="h-4 w-4" /> Return to Dashboard
+              </button>
+              <button
+                onClick={() => downloadReceiptPDF({ ...paymentDetails, reference })}
+                className="w-full py-2.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm font-semibold transition flex items-center justify-center gap-2"
+              >
+                <Download className="h-4 w-4" /> Download Receipt PDF
               </button>
             </div>
           </div>

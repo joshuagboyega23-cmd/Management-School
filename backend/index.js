@@ -243,7 +243,7 @@ const schemas = {
 
   payrollProcess: z.object({
     staffId: z.number().int().positive('staffId must be a positive integer'),
-    amount: z.number().positive('Amount must be a positive number').optional(),
+    amount: z.number().positive('Amount must be a positive number'),
     monthYear: z.string().regex(/^\d{4}-\d{2}$/, "monthYear must be in YYYY-MM format")
   })
 };
@@ -1442,17 +1442,15 @@ app.post('/api/payroll/process', verifyToken, requireRole('ADMIN', 'SUPERADMIN')
   try {
     const { staffId, amount, monthYear } = req.body;
 
-    if (!staffId || !monthYear) {
-      return res.status(400).json({ success: false, message: 'Staff ID and Month/Year are required.' });
+    if (!staffId || !monthYear || !amount) {
+      return res.status(400).json({ success: false, message: 'Staff ID, Amount, and Month/Year are required.' });
     }
-
-    const payrollAmount = amount || 150000.00;
 
     const result = await (req.db || pool).query(
       `INSERT INTO payroll (staff_id, amount, month_year, is_paid, paid_at)
        VALUES ($1, $2, $3, TRUE, NOW()) 
        RETURNING *`,
-      [staffId, payrollAmount, monthYear]
+      [staffId, amount, monthYear]
     );
 
     res.status(201).json({

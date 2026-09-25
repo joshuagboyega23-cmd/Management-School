@@ -57,7 +57,7 @@ export default function ParentDashboard() {
       });
 
       if (res.data.success && res.data.paymentUrl) {
-        window.open(res.data.paymentUrl, '_blank');
+        window.location.href = res.data.paymentUrl;
         showNotification('success', 'Redirecting to Paystack checkout...');
       }
     } catch (err) {
@@ -278,7 +278,7 @@ export default function ParentDashboard() {
                       disabled={paymentLoading}
                       className="bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs px-5 py-2.5 rounded-lg transition shadow"
                     >
-                      {paymentLoading ? 'Processing...' : 'Pay School Fees (₦85,000)'}
+                      {paymentLoading ? 'Processing...' : 'Make Payment'}
                     </button>
                   </div>
                 </div>
