@@ -119,6 +119,23 @@ export function downloadGradeSheetPDF(student, rows) {
 }
 
 /**
+ * Format a date string into full readable date and time (e.g. "24 Sep 2026, 10:34 AM")
+ */
+export function formatDateTime(dateStr) {
+  if (!dateStr) return '—';
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return '—';
+  return d.toLocaleDateString('en-GB', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true
+  });
+}
+
+/**
  * Download a payment receipt PDF.
  * @param {object} details - { reference, amount, term, paidAt }
  */
@@ -126,12 +143,18 @@ export function downloadReceiptPDF(details) {
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
   const startY = addHeader(doc, 'Official Fee Payment Receipt');
 
+  const formattedDate = details.paidAt
+    ? formatDateTime(details.paidAt)
+    : details.created_at
+    ? formatDateTime(details.created_at)
+    : formatDateTime(new Date());
+
   const rows = [
     ['Reference Code', details.reference || '—'],
     ['Amount Paid', `NGN ${Number(details.amount || 0).toLocaleString()}`],
     ['Academic Term', details.term || details.payment?.term || '—'],
     ['Payment Status', 'CONFIRMED / PAID'],
-    ['Date Processed', details.paidAt ? new Date(details.paidAt).toLocaleString() : new Date().toLocaleString()],
+    ['Date Processed', formattedDate],
   ];
 
   autoTable(doc, {

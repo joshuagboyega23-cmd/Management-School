@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { GraduationCap, LogOut, Users, FileText, CreditCard, Award, ChevronDown, ChevronUp, AlertCircle } from 'lucide-react';
+import { GraduationCap, LogOut, Users, FileText, CreditCard, Award, ChevronDown, ChevronUp, AlertCircle, Clock, RefreshCw } from 'lucide-react';
 import API from '../opi';
+import { formatDateTime, downloadReceiptPDF } from '../utils/pdfUtils';
 
 export default function ParentDashboard() {
   const navigate = useNavigate();
@@ -12,6 +13,7 @@ export default function ParentDashboard() {
   const [notification, setNotification] = useState({ type: '', text: '' });
   const [paymentForm, setPaymentForm] = useState({ amount: '85000', term: 'First Term 2026' });
   const [paymentLoading, setPaymentLoading] = useState(false);
+  const [verifyingRef, setVerifyingRef] = useState('');
 
   const fetchChildren = async () => {
     try {
@@ -27,6 +29,27 @@ export default function ParentDashboard() {
       setError(err.response?.data?.message || 'Failed to fetch linked children.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleVerifyPending = async (reference) => {
+    try {
+      setVerifyingRef(reference);
+      const res = await API.get(`/payments/verify/${reference}`);
+      if (res.data.success) {
+        showNotification('success', 'Payment verified successfully! Status updated.');
+      } else {
+        showNotification('error', res.data.message || 'Payment is still pending or unconfirmed.');
+      }
+      // Refresh children data
+      const refreshRes = await API.get('/parent/children');
+      if (refreshRes.data.success) {
+        setChildren(refreshRes.data.data);
+      }
+    } catch (err) {
+      showNotification('error', err.response?.data?.message || 'Could not verify payment status.');
+    } finally {
+      setVerifyingRef('');
     }
   };
 

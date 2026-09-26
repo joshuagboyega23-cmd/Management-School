@@ -15,18 +15,17 @@ CREATE TABLE IF NOT EXISTS users (
     email VARCHAR(255) NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
     role VARCHAR(50) DEFAULT 'STUDENT' CHECK (role IN ('STUDENT', 'TEACHER', 'ADMIN', 'SUPERADMIN', 'PARENT')),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE (email, role)
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Migration: Update users table unique constraint to composite (email, role)
+-- Migration: Drop all unique constraints on email in users table
 DO $$ 
 BEGIN 
     IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'users_email_key') THEN 
         ALTER TABLE users DROP CONSTRAINT users_email_key; 
     END IF; 
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'users_email_role_key') THEN 
-        ALTER TABLE users ADD CONSTRAINT users_email_role_key UNIQUE (email, role); 
+    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'users_email_role_key') THEN 
+        ALTER TABLE users DROP CONSTRAINT users_email_role_key; 
     END IF; 
 END $$;
 

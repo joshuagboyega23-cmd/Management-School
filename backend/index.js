@@ -298,15 +298,6 @@ app.post('/api/auth/register', verifyToken, requireRole('ADMIN', 'SUPERADMIN'), 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const userExists = await client.query(
-      'SELECT id FROM users WHERE LOWER(email) = LOWER($1) AND role = $2',
-      [email.trim(), 'ADMIN']
-    );
-    if (userExists.rows.length > 0) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ success: false, message: 'An admin account with this email is already registered.' });
-    }
-
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
@@ -602,16 +593,6 @@ app.post('/api/auth/register/student', registrationLimiter, validate(schemas.stu
 
     const student = studentRes.rows[0];
 
-    // Ensure email is not already taken for a student account
-    const emailCheck = await client.query(
-      'SELECT id FROM users WHERE LOWER(email) = LOWER($1) AND role = $2',
-      [email.trim(), 'STUDENT']
-    );
-    if (emailCheck.rows.length > 0) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ success: false, message: 'A student account with this email is already registered.' });
-    }
-
     // Create user account with role=STUDENT
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
@@ -700,21 +681,23 @@ app.post('/api/auth/register/parent', registrationLimiter, validate(schemas.pare
     const student = studentRes.rows[0];
 
     // Find or create parent user account
-    let parentUser;
-    const existingUser = await client.query(
+    let parentUser = null;
+    const existingUsers = await client.query(
       'SELECT * FROM users WHERE LOWER(email) = LOWER($1) AND role = $2',
       [email.trim(), 'PARENT']
     );
-    if (existingUser.rows.length > 0) {
-      parentUser = existingUser.rows[0];
-      if (password) {
-        const isMatch = await bcrypt.compare(password, parentUser.password_hash);
-        if (!isMatch) {
-          await client.query('ROLLBACK');
-          return res.status(400).json({ success: false, message: 'Invalid password for existing parent account.' });
+
+    if (existingUsers.rows.length > 0 && password) {
+      for (const u of existingUsers.rows) {
+        const isMatch = await bcrypt.compare(password, u.password_hash);
+        if (isMatch) {
+          parentUser = u;
+          break;
         }
       }
-    } else {
+    }
+
+    if (!parentUser) {
       if (!password) {
         await client.query('ROLLBACK');
         return res.status(400).json({ success: false, message: 'Password is required to create a new parent account.' });
@@ -821,16 +804,6 @@ app.post('/api/auth/register/teacher', registrationLimiter, validate(schemas.tea
     }
 
     const teacher = teacherRes.rows[0];
-
-    // Ensure email is not already taken for a teacher account
-    const emailCheck = await client.query(
-      'SELECT id FROM users WHERE LOWER(email) = LOWER($1) AND role = $2',
-      [email.trim(), 'TEACHER']
-    );
-    if (emailCheck.rows.length > 0) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ success: false, message: 'A teacher account with this email is already registered.' });
-    }
 
     // Create user account with role=TEACHER
     const salt = await bcrypt.genSalt(10);
@@ -1418,19 +1391,28 @@ app.get('/api/payments/verify/:reference', async (req, res) => {
 // Paystack Webhook Handler (Automated status sync)
 app.post('/api/payments/webhook', async (req, res) => {
   try {
+    const raw = req.rawBody || Buffer.from(JSON.stringify(req.body));
     const hash = crypto
       .createHmac('sha512', process.env.PAYSTACK_SECRET_KEY)
-      .update(req.rawBody)
+      .update(raw)
       .digest('hex');
 
     if (hash === req.headers['x-paystack-signature']) {
       const event = req.body;
-      if (event.event === 'charge.success') {
-        const reference = event.data.reference;
-        await pool.query(
-          `UPDATE fee_payments SET status = 'SUCCESS' WHERE reference = $1`,
-          [reference]
-        );
+      const reference = event.data?.reference;
+
+      if (reference) {
+        if (event.event === 'charge.success') {
+          await pool.query(
+            `UPDATE fee_payments SET status = 'SUCCESS' WHERE reference = $1`,
+            [reference]
+          );
+        } else if (event.event === 'charge.failed' || event.event === 'charge.abandoned') {
+          await pool.query(
+            `UPDATE fee_payments SET status = 'FAILED' WHERE reference = $1`,
+            [reference]
+          );
+        }
       }
       return res.sendStatus(200);
     }
@@ -1443,11 +1425,11 @@ app.post('/api/payments/webhook', async (req, res) => {
 app.get('/api/payments/history', verifyToken, async (req, res) => {
   try {
     const payments = await (req.db || pool).query(
-      `SELECT fp.id, fp.amount, fp.reference, fp.status, fp.term, fp.created_at,
-              s.admission_number, u.full_name AS student_name
+      `SELECT fp.id, fp.student_id, fp.amount, fp.reference, fp.status, fp.term, fp.created_at,
+              s.admission_number, COALESCE(u.full_name, s.full_name) AS student_name
        FROM fee_payments fp
        JOIN students s ON fp.student_id = s.id
-       JOIN users u ON s.user_id = u.id
+       LEFT JOIN users u ON s.user_id = u.id
        ORDER BY fp.created_at DESC`
     );
     res.json({ success: true, data: payments.rows });
