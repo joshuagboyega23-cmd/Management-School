@@ -1,7 +1,21 @@
 import React, { useState } from 'react';
 import { Download } from 'lucide-react';
 import { downloadReportCardPDF } from '../utils/pdfUtils';
+
+const CLASS_OPTIONS = ['JSS1', 'JSS2', 'JSS3', 'SS1', 'SS2', 'SS3'];
+
+const filterStudentsByClass = (list, selectedClass) => {
+  if (!selectedClass) return list;
+  const target = selectedClass.toUpperCase().trim();
+  return list.filter((s) => {
+    const cName = (s.class_name || '').toUpperCase().trim();
+    const cLevel = (s.class_level || '').toUpperCase().trim();
+    return cName.startsWith(target) || cLevel === target || String(s.class_id) === target;
+  });
+};
+
 export default function ReportsModule({ students, onSubmitGrade, onFetchReportCard, reportData }) {
+  const [gradeClass, setGradeClass] = useState('');
   const [gradeForm, setGradeForm] = useState({
     studentId: '',
     term: 'First Term',
@@ -10,10 +24,14 @@ export default function ReportsModule({ students, onSubmitGrade, onFetchReportCa
     examScore: ''
   });
 
+  const [viewClass, setViewClass] = useState('');
   const [reportView, setReportView] = useState({ studentId: '' });
 
   const studentList = Array.isArray(students) ? students : [];
   const reportList = Array.isArray(reportData) ? reportData : [];
+
+  const filteredGradeStudents = filterStudentsByClass(studentList, gradeClass);
+  const filteredViewStudents = filterStudentsByClass(studentList, viewClass);
 
   const handleGradeSubmit = (e) => {
     e.preventDefault();
@@ -39,19 +57,38 @@ export default function ReportsModule({ students, onSubmitGrade, onFetchReportCa
       <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
         <h3 className="text-lg font-bold text-gray-800 mb-4">Record Subject Assessment</h3>
         <form onSubmit={handleGradeSubmit} className="space-y-4">
-          <div>
-            <label className="block text-xs font-semibold text-gray-600 mb-1">Select Student</label>
-            <select 
-              value={gradeForm.studentId} 
-              onChange={(e) => setGradeForm({ ...gradeForm, studentId: e.target.value })}
-              required 
-              className="w-full p-2.5 border border-gray-300 rounded-lg text-sm bg-white"
-            >
-              <option value="">-- Choose Student --</option>
-              {studentList.map((s) => (
-                <option key={s.id} value={s.id}>{s.name} ({s.class_name})</option>
-              ))}
-            </select>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1">1. Select Class</label>
+              <select
+                value={gradeClass}
+                onChange={(e) => {
+                  setGradeClass(e.target.value);
+                  setGradeForm({ ...gradeForm, studentId: '' });
+                }}
+                className="w-full p-2.5 border border-gray-300 rounded-lg text-sm bg-white"
+              >
+                <option value="">-- All Classes (JSS1 - SS3) --</option>
+                {CLASS_OPTIONS.map((cls) => (
+                  <option key={cls} value={cls}>{cls}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1">2. Select Student</label>
+              <select 
+                value={gradeForm.studentId} 
+                onChange={(e) => setGradeForm({ ...gradeForm, studentId: e.target.value })}
+                required 
+                className="w-full p-2.5 border border-gray-300 rounded-lg text-sm bg-white"
+              >
+                <option value="">-- Choose Student --</option>
+                {filteredGradeStudents.map((s) => (
+                  <option key={s.id} value={s.id}>{s.name} ({s.class_name || 'No Class'})</option>
+                ))}
+              </select>
+            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-4">
@@ -127,20 +164,41 @@ export default function ReportsModule({ students, onSubmitGrade, onFetchReportCa
             );
           })()}
         </div>
-        <form onSubmit={handleFetchReport} className="flex gap-3 mb-6">
-          <select 
-            value={reportView.studentId} 
-            onChange={(e) => setReportView({ studentId: e.target.value })}
-            required 
-            className="flex-1 p-2.5 border border-gray-300 rounded-lg text-sm bg-white"
-          >
-            <option value="">-- Choose Student --</option>
-            {studentList.map((s) => (
-              <option key={s.id} value={s.id}>{s.name}</option>
-            ))}
-          </select>
-          <button type="submit" className="bg-slate-800 text-white px-4 py-2.5 rounded-lg text-sm font-medium hover:bg-slate-800">
-            Fetch
+        <form onSubmit={handleFetchReport} className="space-y-3 mb-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1">1. Select Class</label>
+              <select
+                value={viewClass}
+                onChange={(e) => {
+                  setViewClass(e.target.value);
+                  setReportView({ studentId: '' });
+                }}
+                className="w-full p-2.5 border border-gray-300 rounded-lg text-sm bg-white"
+              >
+                <option value="">-- All Classes (JSS1 - SS3) --</option>
+                {CLASS_OPTIONS.map((cls) => (
+                  <option key={cls} value={cls}>{cls}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1">2. Select Student</label>
+              <select 
+                value={reportView.studentId} 
+                onChange={(e) => setReportView({ studentId: e.target.value })}
+                required 
+                className="w-full p-2.5 border border-gray-300 rounded-lg text-sm bg-white"
+              >
+                <option value="">-- Choose Student --</option>
+                {filteredViewStudents.map((s) => (
+                  <option key={s.id} value={s.id}>{s.name} ({s.class_name || 'No Class'})</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <button type="submit" className="w-full bg-slate-800 text-white px-4 py-2.5 rounded-lg text-sm font-medium hover:bg-slate-700 transition">
+            Fetch Report Card
           </button>
         </form>
 

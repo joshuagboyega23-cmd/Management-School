@@ -4,6 +4,18 @@ import { GraduationCap, LogOut, FileText, CheckCircle, AlertCircle, Users, BookO
 import API from '../opi';
 import { downloadGradeSheetPDF } from '../utils/pdfUtils';
 
+const CLASS_OPTIONS = ['JSS1', 'JSS2', 'JSS3', 'SS1', 'SS2', 'SS3'];
+
+const filterStudentsByClass = (list, selectedClass) => {
+  if (!selectedClass) return list;
+  const target = selectedClass.toUpperCase().trim();
+  return list.filter((s) => {
+    const cName = (s.class_name || '').toUpperCase().trim();
+    const cLevel = (s.class_level || '').toUpperCase().trim();
+    return cName.startsWith(target) || cLevel === target || String(s.class_id) === target;
+  });
+};
+
 export default function TeacherDashboard() {
   const navigate = useNavigate();
   const [students, setStudents] = useState([]);
@@ -12,9 +24,12 @@ export default function TeacherDashboard() {
   const [selectedStudentId, setSelectedStudentId] = useState('');
   const [reportData, setReportData] = useState(null);
 
+  const [gradeClass, setGradeClass] = useState('');
+  const [viewClass, setViewClass] = useState('');
+
   const [gradeForm, setGradeForm] = useState({
     studentId: '',
-    term: 'First Term 2026',
+    term: 'First Term',
     subject: 'Mathematics',
     caScore: '',
     examScore: ''
@@ -51,7 +66,12 @@ export default function TeacherDashboard() {
   const handleGradeSubmit = async (e) => {
     e.preventDefault();
     try {
-      await API.post('/report-cards', gradeForm);
+      await API.post('/report-cards', {
+        ...gradeForm,
+        studentId: Number(gradeForm.studentId),
+        caScore: Number(gradeForm.caScore),
+        examScore: Number(gradeForm.examScore)
+      });
       showNotification('success', 'Assessment grade recorded successfully!');
       if (gradeForm.studentId === selectedStudentId) {
         fetchStudentReport(gradeForm.studentId);
@@ -80,6 +100,9 @@ export default function TeacherDashboard() {
     setSelectedStudentId(studentId);
     fetchStudentReport(studentId);
   };
+
+  const filteredGradeStudents = filterStudentsByClass(students, gradeClass);
+  const filteredViewStudents = filterStudentsByClass(students, viewClass);
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
@@ -123,21 +146,40 @@ export default function TeacherDashboard() {
             <p className="text-xs text-slate-500 mb-6">Record Continuous Assessment (CA) and Exam scores</p>
 
             <form onSubmit={handleGradeSubmit} className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">Select Student</label>
-                <select
-                  value={gradeForm.studentId}
-                  onChange={(e) => setGradeForm({ ...gradeForm, studentId: e.target.value })}
-                  required
-                  className="w-full p-2.5 border border-slate-300 rounded-lg text-sm bg-white"
-                >
-                  <option value="">-- Choose Student --</option>
-                  {students.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name} ({s.admission_no || s.admission_number}) - {s.class_name}
-                    </option>
-                  ))}
-                </select>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">1. Select Class</label>
+                  <select
+                    value={gradeClass}
+                    onChange={(e) => {
+                      setGradeClass(e.target.value);
+                      setGradeForm({ ...gradeForm, studentId: '' });
+                    }}
+                    className="w-full p-2.5 border border-slate-300 rounded-lg text-sm bg-white"
+                  >
+                    <option value="">-- All Classes (JSS1 - SS3) --</option>
+                    {CLASS_OPTIONS.map((cls) => (
+                      <option key={cls} value={cls}>{cls}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">2. Select Student</label>
+                  <select
+                    value={gradeForm.studentId}
+                    onChange={(e) => setGradeForm({ ...gradeForm, studentId: e.target.value })}
+                    required
+                    className="w-full p-2.5 border border-slate-300 rounded-lg text-sm bg-white"
+                  >
+                    <option value="">-- Choose Student --</option>
+                    {filteredGradeStudents.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name} ({s.admission_no || s.admission_number}) - {s.class_name || 'No Class'}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
@@ -154,13 +196,16 @@ export default function TeacherDashboard() {
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-600 mb-1">Term</label>
-                  <input
-                    type="text"
+                  <select
                     value={gradeForm.term}
                     onChange={(e) => setGradeForm({ ...gradeForm, term: e.target.value })}
                     required
-                    className="w-full p-2.5 border border-slate-300 rounded-lg text-sm"
-                  />
+                    className="w-full p-2.5 border border-slate-300 rounded-lg text-sm bg-white"
+                  >
+                    <option value="First Term">First Term</option>
+                    <option value="Second Term">Second Term</option>
+                    <option value="Third Term">Third Term</option>
+                  </select>
                 </div>
               </div>
 
@@ -223,21 +268,42 @@ export default function TeacherDashboard() {
                 );
               })()}
             </div>
-            <p className="text-xs text-slate-500 mb-4">Select a student to view their current term records</p>
+            <p className="text-xs text-slate-500 mb-4">Select a class and student to view their current term records</p>
 
-            <div className="mb-4">
-              <select
-                value={selectedStudentId}
-                onChange={(e) => handleStudentSelect(e.target.value)}
-                className="w-full p-2.5 border border-slate-300 rounded-lg text-sm bg-white"
-              >
-                <option value="">-- Choose Student to View --</option>
-                {students.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name} ({s.admission_no || s.admission_number})
-                  </option>
-                ))}
-              </select>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">1. Select Class</label>
+                <select
+                  value={viewClass}
+                  onChange={(e) => {
+                    setViewClass(e.target.value);
+                    setSelectedStudentId('');
+                    setReportData(null);
+                  }}
+                  className="w-full p-2.5 border border-slate-300 rounded-lg text-sm bg-white"
+                >
+                  <option value="">-- All Classes (JSS1 - SS3) --</option>
+                  {CLASS_OPTIONS.map((cls) => (
+                    <option key={cls} value={cls}>{cls}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">2. Select Student</label>
+                <select
+                  value={selectedStudentId}
+                  onChange={(e) => handleStudentSelect(e.target.value)}
+                  className="w-full p-2.5 border border-slate-300 rounded-lg text-sm bg-white"
+                >
+                  <option value="">-- Choose Student to View --</option>
+                  {filteredViewStudents.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name} ({s.admission_no || s.admission_number}) - {s.class_name || 'No Class'}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
 
             {selectedStudentId ? (
@@ -278,4 +344,3 @@ export default function TeacherDashboard() {
     </div>
   );
 }
-

@@ -235,7 +235,7 @@ function Navbar({ onEnterPortal }) {
 function Hero() {
   return (
     <section
-      className="relative min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-950 via-blue-900 to-blue-800 text-white overflow-hidden"
+      className="relative min-h-screen flex flex-col justify-between bg-gradient-to-br from-blue-950 via-blue-900 to-blue-800 text-white overflow-hidden"
       style={{
         backgroundImage: `url('/src/assets/hero.png')`,
         backgroundSize: 'cover',
@@ -249,23 +249,23 @@ function Hero() {
       <div className="absolute -top-32 -right-32 w-[500px] h-[500px] rounded-full bg-blue-600/20 blur-3xl" />
       <div className="absolute -bottom-32 -left-32 w-[400px] h-[400px] rounded-full bg-yellow-400/10 blur-3xl" />
 
-      <div className="relative z-10 max-w-4xl mx-auto px-6 text-center py-32">
+      <div className="relative z-10 max-w-4xl mx-auto px-6 text-center pt-32 pb-12 md:py-36 my-auto">
         <span className="inline-block bg-yellow-400/20 border border-yellow-400/40 text-yellow-300 text-xs font-semibold tracking-widest uppercase px-4 py-1.5 rounded-full mb-6">
           {SCHOOL.motto}
         </span>
 
-        <h1 className="text-5xl md:text-7xl font-extrabold leading-tight mb-6 drop-shadow-xl">
+        <h1 className="text-4xl sm:text-5xl md:text-7xl font-extrabold leading-tight mb-6 drop-shadow-xl">
           {SCHOOL.name}
         </h1>
 
-        <p className="text-blue-200 text-lg md:text-xl max-w-2xl mx-auto mb-3">
+        <p className="text-blue-200 text-base sm:text-lg md:text-xl max-w-2xl mx-auto mb-3">
           {SCHOOL.tagline}
         </p>
-        <p className="text-blue-300/70 text-sm mb-10">
+        <p className="text-blue-300/70 text-xs sm:text-sm mb-8 sm:mb-10">
           Established {SCHOOL.established} &nbsp;·&nbsp; JSS1 – SS3 &nbsp;·&nbsp; Lagos, Nigeria
         </p>
 
-        <div className="flex flex-col sm:flex-row gap-4 justify-center">
+        <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 justify-center">
           <a href="#admissions"
             className="bg-yellow-400 hover:bg-yellow-300 text-blue-950 font-bold px-7 py-3.5 rounded-xl text-sm transition flex items-center justify-center gap-2 shadow-lg">
             Apply for Admission <ChevronRight className="h-4 w-4" />
@@ -283,7 +283,7 @@ function Hero() {
         </div>
 
         {/* Discreet Student & Parent Portal link */}
-        <div className="mt-6 flex items-center justify-center gap-3 text-xs text-blue-300/80">
+        <div className="mt-8 mb-4 flex flex-wrap items-center justify-center gap-2 sm:gap-3 text-xs text-blue-300/80">
           <span className="text-blue-300/60 font-medium">Students & Parents:</span>
           <Link to="/login" className="hover:text-white underline transition">
             Student / Parent Sign In
@@ -296,12 +296,12 @@ function Hero() {
       </div>
 
       {/* Stat bar */}
-      <div className="absolute bottom-0 left-0 right-0 bg-blue-950/80 backdrop-blur border-t border-white/10">
+      <div className="relative z-10 w-full bg-blue-950/85 backdrop-blur border-t border-white/10 mt-auto">
         <div className="max-w-5xl mx-auto grid grid-cols-2 md:grid-cols-4 gap-px">
           {STATS.map(({ value, label, icon: Icon }) => (
-            <div key={label} className="flex flex-col items-center py-5 px-4 text-center">
+            <div key={label} className="flex flex-col items-center py-4 sm:py-5 px-3 sm:px-4 text-center">
               <Icon className="h-5 w-5 text-yellow-400 mb-1" />
-              <span className="text-2xl font-extrabold text-white">{value}</span>
+              <span className="text-xl sm:text-2xl font-extrabold text-white">{value}</span>
               <span className="text-blue-300 text-xs mt-0.5">{label}</span>
             </div>
           ))}

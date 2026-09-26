@@ -298,10 +298,13 @@ app.post('/api/auth/register', verifyToken, requireRole('ADMIN', 'SUPERADMIN'), 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const userExists = await client.query('SELECT id FROM users WHERE email = $1', [email]);
+    const userExists = await client.query(
+      'SELECT id FROM users WHERE LOWER(email) = LOWER($1) AND role = $2',
+      [email.trim(), 'ADMIN']
+    );
     if (userExists.rows.length > 0) {
       await client.query('ROLLBACK');
-      return res.status(400).json({ success: false, message: 'Email already registered.' });
+      return res.status(400).json({ success: false, message: 'An admin account with this email is already registered.' });
     }
 
     const salt = await bcrypt.genSalt(10);
@@ -311,7 +314,7 @@ app.post('/api/auth/register', verifyToken, requireRole('ADMIN', 'SUPERADMIN'), 
       `INSERT INTO users (full_name, email, password_hash, role) 
        VALUES ($1, $2, $3, 'ADMIN') 
        RETURNING id, full_name, email, role, created_at`,
-      [full_name, email, hashedPassword]
+      [full_name, email.trim().toLowerCase(), hashedPassword]
     );
 
     await client.query('COMMIT');
@@ -599,11 +602,14 @@ app.post('/api/auth/register/student', registrationLimiter, validate(schemas.stu
 
     const student = studentRes.rows[0];
 
-    // Ensure email is not already taken
-    const emailCheck = await client.query('SELECT id FROM users WHERE email = $1', [email]);
+    // Ensure email is not already taken for a student account
+    const emailCheck = await client.query(
+      'SELECT id FROM users WHERE LOWER(email) = LOWER($1) AND role = $2',
+      [email.trim(), 'STUDENT']
+    );
     if (emailCheck.rows.length > 0) {
       await client.query('ROLLBACK');
-      return res.status(400).json({ success: false, message: 'Email is already registered.' });
+      return res.status(400).json({ success: false, message: 'A student account with this email is already registered.' });
     }
 
     // Create user account with role=STUDENT
@@ -614,7 +620,7 @@ app.post('/api/auth/register/student', registrationLimiter, validate(schemas.stu
       `INSERT INTO users (full_name, email, password_hash, role)
        VALUES ($1, $2, $3, 'STUDENT')
        RETURNING id, full_name, email, role, created_at`,
-      [fullName || student.full_name, email, hashedPassword]
+      [fullName || student.full_name, email.trim().toLowerCase(), hashedPassword]
     );
     const newUser = userRes.rows[0];
 
@@ -695,7 +701,10 @@ app.post('/api/auth/register/parent', registrationLimiter, validate(schemas.pare
 
     // Find or create parent user account
     let parentUser;
-    const existingUser = await client.query('SELECT * FROM users WHERE email = $1', [email]);
+    const existingUser = await client.query(
+      'SELECT * FROM users WHERE LOWER(email) = LOWER($1) AND role = $2',
+      [email.trim(), 'PARENT']
+    );
     if (existingUser.rows.length > 0) {
       parentUser = existingUser.rows[0];
       if (password) {
@@ -717,7 +726,7 @@ app.post('/api/auth/register/parent', registrationLimiter, validate(schemas.pare
         `INSERT INTO users (full_name, email, password_hash, role)
          VALUES ($1, $2, $3, 'PARENT')
          RETURNING id, full_name, email, role, created_at`,
-        [fullName || 'Parent', email, hashedPassword]
+        [fullName || 'Parent', email.trim().toLowerCase(), hashedPassword]
       );
       parentUser = newUserRes.rows[0];
     }
@@ -813,11 +822,14 @@ app.post('/api/auth/register/teacher', registrationLimiter, validate(schemas.tea
 
     const teacher = teacherRes.rows[0];
 
-    // Ensure email is not already taken in users
-    const emailCheck = await client.query('SELECT id FROM users WHERE LOWER(email) = LOWER($1)', [email.trim()]);
+    // Ensure email is not already taken for a teacher account
+    const emailCheck = await client.query(
+      'SELECT id FROM users WHERE LOWER(email) = LOWER($1) AND role = $2',
+      [email.trim(), 'TEACHER']
+    );
     if (emailCheck.rows.length > 0) {
       await client.query('ROLLBACK');
-      return res.status(400).json({ success: false, message: 'Email is already registered.' });
+      return res.status(400).json({ success: false, message: 'A teacher account with this email is already registered.' });
     }
 
     // Create user account with role=TEACHER
@@ -874,34 +886,44 @@ app.post('/api/auth/login', validate(schemas.login), async (req, res) => {
     return res.status(400).json({ success: false, message: 'Email, password, and portal are required.' });
   }
 
+  // Role-to-Portal Authorization Mapping
+  const allowedRolesByPortal = {
+    'student-parent': ['STUDENT', 'PARENT'],
+    'teacher': ['TEACHER'],
+    'admin': ['ADMIN', 'SUPERADMIN']
+  };
+
+  const allowedRoles = allowedRolesByPortal[portal] || [];
+  if (allowedRoles.length === 0) {
+    return res.status(400).json({ success: false, message: 'Invalid email or password.' });
+  }
+
   try {
-    const userResult = await pool.query('SELECT * FROM users WHERE LOWER(email) = LOWER($1)', [email.trim()]);
+    const userResult = await pool.query(
+      'SELECT * FROM users WHERE LOWER(email) = LOWER($1) AND role = ANY($2::text[])',
+      [email.trim(), allowedRoles]
+    );
+
     if (userResult.rows.length === 0) {
       return res.status(400).json({ success: false, message: 'Invalid email or password.' });
     }
 
-    const user = userResult.rows[0];
-    const isMatch = await bcrypt.compare(password, user.password_hash);
-
-    if (!isMatch) {
-      return res.status(400).json({ success: false, message: 'Invalid email or password.' });
+    // Match password against accounts matching the portal's allowed roles
+    let matchedUser = null;
+    for (const u of userResult.rows) {
+      const isMatch = await bcrypt.compare(password, u.password_hash);
+      if (isMatch) {
+        matchedUser = u;
+        break;
+      }
     }
 
-    // Role-to-Portal Authorization Guard
-    const allowedRolesByPortal = {
-      'student-parent': ['STUDENT', 'PARENT'],
-      'teacher': ['TEACHER'],
-      'admin': ['ADMIN', 'SUPERADMIN']
-    };
-
-    const allowedRoles = allowedRolesByPortal[portal] || [];
-    if (!allowedRoles.includes(user.role)) {
-      // Intentionally return identical generic error to prevent account probing
+    if (!matchedUser) {
       return res.status(400).json({ success: false, message: 'Invalid email or password.' });
     }
 
     const token = jwt.sign(
-      { id: user.id, role: user.role, email: user.email },
+      { id: matchedUser.id, role: matchedUser.role, email: matchedUser.email },
       process.env.JWT_SECRET,
       { expiresIn: '1d' }
     );
@@ -910,10 +932,10 @@ app.post('/api/auth/login', validate(schemas.login), async (req, res) => {
       success: true,
       token,
       user: {
-        id: user.id,
-        full_name: user.full_name,
-        email: user.email,
-        role: user.role
+        id: matchedUser.id,
+        full_name: matchedUser.full_name,
+        email: matchedUser.email,
+        role: matchedUser.role
       }
     });
   } catch (error) {
@@ -928,7 +950,7 @@ app.post('/api/auth/login', validate(schemas.login), async (req, res) => {
 app.get('/api/students', verifyToken, requireRole('ADMIN', 'SUPERADMIN', 'TEACHER'), async (req, res) => {
   try {
     const students = await req.db.query(
-      `SELECT s.id, s.admission_number AS admission_no, 
+      `SELECT s.id, s.class_id, c.level AS class_level, s.admission_number AS admission_no, 
               COALESCE(u.full_name, s.full_name) AS name, 
               u.email, 
               c.name AS class_name, 

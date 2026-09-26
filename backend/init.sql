@@ -12,11 +12,23 @@ END $$;
 CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
     full_name VARCHAR(255) NOT NULL,
-    email VARCHAR(255) UNIQUE NOT NULL,
+    email VARCHAR(255) NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
     role VARCHAR(50) DEFAULT 'STUDENT' CHECK (role IN ('STUDENT', 'TEACHER', 'ADMIN', 'SUPERADMIN', 'PARENT')),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (email, role)
 );
+
+-- Migration: Update users table unique constraint to composite (email, role)
+DO $$ 
+BEGIN 
+    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'users_email_key') THEN 
+        ALTER TABLE users DROP CONSTRAINT users_email_key; 
+    END IF; 
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'users_email_role_key') THEN 
+        ALTER TABLE users ADD CONSTRAINT users_email_role_key UNIQUE (email, role); 
+    END IF; 
+END $$;
 
 -- 3. Teachers Table
 CREATE TABLE IF NOT EXISTS teachers (
@@ -25,20 +37,20 @@ CREATE TABLE IF NOT EXISTS teachers (
     staff_id VARCHAR(50) UNIQUE NOT NULL,
     full_name VARCHAR(255) NOT NULL,
     date_of_birth DATE NOT NULL,
-    email VARCHAR(255) UNIQUE NOT NULL,
+    email VARCHAR(255) NOT NULL,
     subjects_taught TEXT[] DEFAULT '{}',
     invite_accepted BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Idempotent column additions for existing teachers table
+-- Idempotent column additions and constraint updates for existing teachers table
 ALTER TABLE teachers ADD COLUMN IF NOT EXISTS full_name VARCHAR(255);
 ALTER TABLE teachers ADD COLUMN IF NOT EXISTS date_of_birth DATE;
 ALTER TABLE teachers ADD COLUMN IF NOT EXISTS email VARCHAR(255);
 DO $$ 
 BEGIN 
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'teachers_email_key') THEN 
-        ALTER TABLE teachers ADD CONSTRAINT teachers_email_key UNIQUE (email); 
+    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'teachers_email_key') THEN 
+        ALTER TABLE teachers DROP CONSTRAINT teachers_email_key; 
     END IF; 
 END $$;
 
