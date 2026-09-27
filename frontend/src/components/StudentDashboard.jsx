@@ -10,11 +10,10 @@ export default function StudentDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState('grades'); // 'grades' | 'payments'
-  const [paymentAmount, setPaymentAmount] = useState('85000');
-  const [paymentTerm, setPaymentTerm] = useState('First Term 2026');
-  const [paymentLoading, setPaymentLoading] = useState(false);
   const [verifyingRef, setVerifyingRef] = useState('');
   const [notification, setNotification] = useState({ type: '', text: '' });
+  const [feeHistory, setFeeHistory] = useState([]);
+  const [announcements, setAnnouncements] = useState([]);
 
   const fetchStudentData = async () => {
     try {
@@ -44,6 +43,13 @@ export default function StudentDashboard() {
       if (refreshRes.data.success) {
         setData(refreshRes.data.data);
       }
+      const feeRes = await API.get('/payments/history');
+      if (feeRes.data.success) {
+        const studentPayments = (Array.isArray(feeRes.data.data) ? feeRes.data.data : []).filter(
+          (payment) => Number(payment.student_id) === Number(student?.id)
+        );
+        setFeeHistory(studentPayments);
+      }
     } catch (err) {
       showNotification('error', err.response?.data?.message || 'Could not verify payment status.');
     } finally {
@@ -51,9 +57,39 @@ export default function StudentDashboard() {
     }
   };
 
+  const fetchFeeStatus = async () => {
+    if (!student?.id) return;
+    try {
+      const res = await API.get('/payments/history');
+      const paymentsList = Array.isArray(res.data?.data) ? res.data.data : [];
+      const studentPayments = paymentsList.filter(
+        (payment) => Number(payment.student_id) === Number(student.id)
+      );
+      setFeeHistory(studentPayments);
+    } catch (err) {
+      setFeeHistory([]);
+    }
+  };
+
+  const fetchAnnouncements = async () => {
+    try {
+      const res = await API.get('/announcements');
+      setAnnouncements(Array.isArray(res.data?.data) ? res.data.data : []);
+    } catch (err) {
+      setAnnouncements([]);
+    }
+  };
+
   useEffect(() => {
     fetchStudentData();
+    fetchAnnouncements();
   }, []);
+
+  useEffect(() => {
+    if (student?.id) {
+      fetchFeeStatus();
+    }
+  }, [student?.id]);
 
   const handleLogout = () => {
     localStorage.removeItem('token');
@@ -64,30 +100,6 @@ export default function StudentDashboard() {
   const showNotification = (type, text) => {
     setNotification({ type, text });
     setTimeout(() => setNotification({ type: '', text: '' }), 4000);
-  };
-
-  const handleInitiatePayment = async (e) => {
-    e.preventDefault();
-    if (!data?.student?.id) return;
-    try {
-      setPaymentLoading(true);
-      const user = JSON.parse(localStorage.getItem('user') || '{}');
-      const res = await API.post('/payments/initialize', {
-        studentId: data.student.id,
-        amount: parseFloat(paymentAmount),
-        email: user.email,
-        term: paymentTerm
-      });
-
-      if (res.data.success && res.data.paymentUrl) {
-        window.location.href = res.data.paymentUrl;
-        showNotification('success', 'Redirecting to Paystack checkout...');
-      }
-    } catch (err) {
-      showNotification('error', err.response?.data?.error || 'Failed to initialize payment');
-    } finally {
-      setPaymentLoading(false);
-    }
   };
 
   if (loading) {
@@ -101,6 +113,9 @@ export default function StudentDashboard() {
   const student = data?.student;
   const reportCards = data?.reportCards || [];
   const payments = data?.payments || [];
+  const upcomingEvents = [...announcements]
+    .filter((item) => item.event_date)
+    .sort((a, b) => new Date(a.event_date) - new Date(b.event_date));
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
@@ -165,6 +180,49 @@ export default function StudentDashboard() {
           </div>
         </div>
 
+        <div className="mb-8 grid grid-cols-1 xl:grid-cols-[1.4fr_0.6fr] gap-6">
+          <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+            <h3 className="text-lg font-bold text-slate-800 mb-3">School Announcements</h3>
+            {announcements.length === 0 ? (
+              <p className="text-sm text-slate-500">No announcements are currently visible to your role.</p>
+            ) : (
+              <div className="space-y-3">
+                {announcements.map((announcement) => (
+                  <div key={announcement.id} className="border border-slate-200 rounded-xl p-3 bg-slate-50">
+                    <div className="flex justify-between items-start gap-3 mb-1">
+                      <p className="font-semibold text-slate-800">{announcement.title}</p>
+                      {announcement.event_date && (
+                        <span className="text-[11px] font-medium bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">
+                          {new Date(announcement.event_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-sm text-slate-600 whitespace-pre-wrap">{announcement.message}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+            <h3 className="text-lg font-bold text-slate-800 mb-3">Upcoming Events</h3>
+            {upcomingEvents.length === 0 ? (
+              <p className="text-sm text-slate-500">No upcoming events scheduled.</p>
+            ) : (
+              <div className="space-y-3">
+                {upcomingEvents.map((event) => (
+                  <div key={event.id} className="border border-blue-200 rounded-xl p-3 bg-blue-50">
+                    <p className="font-semibold text-slate-800">{event.title}</p>
+                    <p className="text-xs text-blue-700 mt-1">
+                      {new Date(event.event_date).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
         {/* Navigation Tabs */}
         <div className="flex gap-3 mb-6 border-b border-slate-200 pb-3">
           <button
@@ -185,7 +243,7 @@ export default function StudentDashboard() {
                 : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
             }`}
           >
-            <CreditCard className="h-4 w-4" /> Fee Payments & Invoices
+            <CreditCard className="h-4 w-4" /> My Fee Status
           </button>
         </div>
 
@@ -254,7 +312,6 @@ export default function StudentDashboard() {
         {/* Tab 2: Payments */}
         {activeTab === 'payments' && (
           <div className="space-y-6">
-            {/* Pending Payments Section */}
             {payments.filter((p) => p.status === 'PENDING').length > 0 && (
               <div className="bg-amber-50 border border-amber-200 rounded-2xl p-6 shadow-sm">
                 <div className="flex items-center gap-2 mb-3">
@@ -287,84 +344,56 @@ export default function StudentDashboard() {
               </div>
             )}
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-              <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-                <h3 className="text-lg font-bold text-slate-800 mb-4">Payment History</h3>
-                {payments.length === 0 ? (
-                  <p className="text-sm text-slate-500 py-6 text-center">No payment transactions found.</p>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse text-sm">
-                      <thead>
-                        <tr className="border-b border-slate-200 text-slate-500 font-medium text-xs">
-                          <th className="pb-3">Reference</th>
-                          <th className="pb-3">Term</th>
-                          <th className="pb-3">Amount</th>
-                          <th className="pb-3">Status</th>
-                          <th className="pb-3">Date & Time</th>
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                  <CreditCard className="h-5 w-5 text-blue-600" /> My Fee Status
+                </h3>
+              </div>
+
+              {feeHistory.length === 0 ? (
+                <p className="text-sm text-slate-500 py-6 text-center">No fee transaction history has been recorded yet.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-200 text-slate-500 font-medium">
+                        <th className="pb-3">Term</th>
+                        <th className="pb-3">Amount</th>
+                        <th className="pb-3">Date &amp; Time</th>
+                        <th className="pb-3">Status</th>
+                        <th className="pb-3">Receipt</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 text-slate-700">
+                      {feeHistory.map((p) => (
+                        <tr key={p.id}>
+                          <td className="py-3">{p.term || 'First Term'}</td>
+                          <td className="py-3 font-bold">₦{parseFloat(p.amount).toLocaleString()}</td>
+                          <td className="py-3 text-xs text-slate-500">{formatDateTime(p.created_at)}</td>
+                          <td className="py-3">
+                            <span className={`px-2 py-0.5 rounded text-xs font-semibold ${
+                              p.status === 'SUCCESS' ? 'bg-emerald-100 text-emerald-800' : p.status === 'FAILED' ? 'bg-red-100 text-red-800' : 'bg-amber-100 text-amber-800'
+                            }`}>
+                              {p.status === 'SUCCESS' ? 'Confirmed' : p.status === 'FAILED' ? 'Failed' : 'Pending'}
+                            </span>
+                          </td>
+                          <td className="py-3">
+                            {p.status === 'SUCCESS' && (
+                              <button
+                                onClick={() => downloadReceiptPDF({ ...p, reference: p.reference, amount: p.amount, term: p.term, paidAt: p.created_at })}
+                                className="text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-2.5 py-1.5 rounded-lg transition"
+                              >
+                                Download Receipt
+                              </button>
+                            )}
+                          </td>
                         </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 text-slate-700">
-                        {payments.map((p) => (
-                          <tr key={p.id}>
-                            <td className="py-3 font-mono text-xs text-slate-500">{p.reference}</td>
-                            <td className="py-3">{p.term || 'First Term'}</td>
-                            <td className="py-3 font-bold">₦{parseFloat(p.amount).toLocaleString()}</td>
-                            <td className="py-3">
-                              <span className={`px-2 py-0.5 rounded text-xs font-semibold ${
-                                p.status === 'SUCCESS' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
-                              }`}>
-                                {p.status}
-                              </span>
-                            </td>
-                            <td className="py-3 text-xs text-slate-500">
-                              {formatDateTime(p.created_at)}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-
-              {/* Pay Tuition Online */}
-              <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-                <h3 className="text-lg font-bold text-slate-800 mb-2">Pay School Fees</h3>
-                <p className="text-xs text-slate-500 mb-4">Direct checkout with Paystack</p>
-
-                <form onSubmit={handleInitiatePayment} className="space-y-4">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">Academic Term</label>
-                    <input
-                      type="text"
-                      value={paymentTerm}
-                      onChange={(e) => setPaymentTerm(e.target.value)}
-                      required
-                      className="w-full p-2.5 border border-slate-300 rounded-lg text-sm"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">Amount (₦)</label>
-                    <input
-                      type="number"
-                      value={paymentAmount}
-                      onChange={(e) => setPaymentAmount(e.target.value)}
-                      required
-                      className="w-full p-2.5 border border-slate-300 rounded-lg text-sm"
-                    />
-                  </div>
-
-                  <button
-                    type="submit"
-                    disabled={paymentLoading}
-                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2.5 rounded-lg text-sm transition shadow flex items-center justify-center gap-2"
-                  >
-                    <CreditCard className="h-4 w-4" /> {paymentLoading ? 'Processing...' : 'Proceed to Checkout'}
-                  </button>
-                </form>
-              </div>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           </div>
         )}

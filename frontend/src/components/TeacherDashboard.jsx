@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { GraduationCap, LogOut, FileText, CheckCircle, AlertCircle, Users, BookOpen, Plus, Download } from 'lucide-react';
+import { GraduationCap, LogOut, FileText, CheckCircle, AlertCircle, Users, BookOpen, Plus, Download, MessageSquareText } from 'lucide-react';
 import API from '../opi';
 import { downloadGradeSheetPDF } from '../utils/pdfUtils';
 
@@ -22,7 +22,13 @@ export default function TeacherDashboard() {
   const [loading, setLoading] = useState(false);
   const [notification, setNotification] = useState({ type: '', text: '' });
   const [selectedStudentId, setSelectedStudentId] = useState('');
+  const [activeTab, setActiveTab] = useState('grades');
   const [reportData, setReportData] = useState(null);
+  const [announcements, setAnnouncements] = useState([]);
+  const [conversations, setConversations] = useState([]);
+  const [selectedConversationId, setSelectedConversationId] = useState('');
+  const [conversationThread, setConversationThread] = useState([]);
+  const [replyText, setReplyText] = useState('');
 
   const [gradeClass, setGradeClass] = useState('');
   const [viewClass, setViewClass] = useState('');
@@ -48,9 +54,48 @@ export default function TeacherDashboard() {
     }
   };
 
+  const fetchAnnouncements = async () => {
+    try {
+      const res = await API.get('/announcements');
+      setAnnouncements(Array.isArray(res.data?.data) ? res.data.data : []);
+    } catch (err) {
+      setAnnouncements([]);
+    }
+  };
+
+  const fetchConversations = async () => {
+    try {
+      const res = await API.get('/conversations');
+      setConversations(Array.isArray(res.data?.data) ? res.data.data : []);
+      if (res.data?.data?.length > 0 && !selectedConversationId) {
+        setSelectedConversationId(String(res.data.data[0].id));
+      }
+    } catch (err) {
+      setConversations([]);
+    }
+  };
+
+  const fetchConversationThread = async (conversationId) => {
+    if (!conversationId) return;
+    try {
+      const res = await API.get(`/conversations/${conversationId}/messages`);
+      setConversationThread(Array.isArray(res.data?.data) ? res.data.data : []);
+    } catch (err) {
+      setConversationThread([]);
+    }
+  };
+
   useEffect(() => {
     fetchStudents();
+    fetchAnnouncements();
+    fetchConversations();
   }, []);
+
+  useEffect(() => {
+    if (selectedConversationId) {
+      fetchConversationThread(selectedConversationId);
+    }
+  }, [selectedConversationId]);
 
   const showNotification = (type, text) => {
     setNotification({ type, text });
@@ -103,6 +148,22 @@ export default function TeacherDashboard() {
 
   const filteredGradeStudents = filterStudentsByClass(students, gradeClass);
   const filteredViewStudents = filterStudentsByClass(students, viewClass);
+  const upcomingEvents = [...announcements]
+    .filter((item) => item.event_date)
+    .sort((a, b) => new Date(a.event_date) - new Date(b.event_date));
+
+  const handleReplySubmit = async (e) => {
+    e.preventDefault();
+    if (!selectedConversationId || !replyText.trim()) return;
+    try {
+      await API.post(`/conversations/${selectedConversationId}/messages`, { body: replyText });
+      setReplyText('');
+      fetchConversationThread(selectedConversationId);
+      fetchConversations();
+    } catch (err) {
+      showNotification('error', err.response?.data?.message || 'Failed to send message');
+    }
+  };
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
@@ -129,6 +190,49 @@ export default function TeacherDashboard() {
 
       {/* Main Container */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 w-full">
+        <div className="mb-8 grid grid-cols-1 xl:grid-cols-[1.4fr_0.6fr] gap-6">
+          <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+            <h3 className="text-lg font-bold text-slate-800 mb-3">School Announcements</h3>
+            {announcements.length === 0 ? (
+              <p className="text-sm text-slate-500">No announcements are currently visible to your role.</p>
+            ) : (
+              <div className="space-y-3">
+                {announcements.map((announcement) => (
+                  <div key={announcement.id} className="border border-slate-200 rounded-xl p-3 bg-slate-50">
+                    <div className="flex justify-between items-start gap-3 mb-1">
+                      <p className="font-semibold text-slate-800">{announcement.title}</p>
+                      {announcement.event_date && (
+                        <span className="text-[11px] font-medium bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">
+                          {new Date(announcement.event_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-sm text-slate-600 whitespace-pre-wrap">{announcement.message}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+            <h3 className="text-lg font-bold text-slate-800 mb-3">Upcoming Events</h3>
+            {upcomingEvents.length === 0 ? (
+              <p className="text-sm text-slate-500">No upcoming events scheduled.</p>
+            ) : (
+              <div className="space-y-3">
+                {upcomingEvents.map((event) => (
+                  <div key={event.id} className="border border-blue-200 rounded-xl p-3 bg-blue-50">
+                    <p className="font-semibold text-slate-800">{event.title}</p>
+                    <p className="text-xs text-blue-700 mt-1">
+                      {new Date(event.event_date).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
         {notification.text && (
           <div className={`mb-6 p-4 rounded-xl text-sm font-medium ${
             notification.type === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-red-50 text-red-800 border border-red-200'
@@ -137,6 +241,22 @@ export default function TeacherDashboard() {
           </div>
         )}
 
+        <div className="flex gap-3 mb-6 border-b border-slate-200 pb-3">
+          <button
+            onClick={() => setActiveTab('grades')}
+            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm transition ${activeTab === 'grades' ? 'bg-blue-600 text-white shadow' : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'}`}
+          >
+            <FileText className="h-4 w-4" /> Grades
+          </button>
+          <button
+            onClick={() => setActiveTab('messages')}
+            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm transition ${activeTab === 'messages' ? 'bg-blue-600 text-white shadow' : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'}`}
+          >
+            <MessageSquareText className="h-4 w-4" /> Messages
+          </button>
+        </div>
+
+        {activeTab === 'grades' && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           {/* Grade Submission Form */}
           <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
@@ -340,6 +460,73 @@ export default function TeacherDashboard() {
             )}
           </div>
         </div>
+
+        )}
+
+        {activeTab === 'messages' && (
+        <div className="mt-8 grid grid-cols-1 xl:grid-cols-[0.95fr_1.25fr] gap-6">
+          <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
+            <h3 className="text-lg font-bold text-slate-800 mb-4">Messages</h3>
+            <div className="space-y-3">
+              {conversations.length === 0 ? (
+                <p className="text-sm text-slate-500">No conversations directed to you yet.</p>
+              ) : (
+                conversations.map((conversation) => (
+                  <button
+                    key={conversation.id}
+                    type="button"
+                    onClick={() => setSelectedConversationId(String(conversation.id))}
+                    className={`w-full text-left rounded-xl border p-3 ${selectedConversationId === String(conversation.id) ? 'border-blue-500 bg-blue-50' : 'border-slate-200 bg-slate-50'}`}
+                  >
+                    <div className="flex justify-between gap-3 items-center">
+                      <strong className="text-sm text-slate-800">{conversation.subject}</strong>
+                      {Number(conversation.unread_count || 0) > 0 && (
+                        <span className="bg-red-500 text-white text-[10px] px-1.5 py-0.5 rounded-full">{conversation.unread_count}</span>
+                      )}
+                    </div>
+                    <p className="text-xs text-slate-500 mt-1">From {conversation.creator_name}</p>
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
+            <h3 className="text-lg font-bold text-slate-800 mb-4">Conversation Thread</h3>
+            {selectedConversationId ? (
+              <>
+                <div className="space-y-3 max-h-[360px] overflow-y-auto mb-4">
+                  {conversationThread.length === 0 ? (
+                    <p className="text-sm text-slate-500">No replies yet.</p>
+                  ) : (
+                    conversationThread.map((message) => (
+                      <div key={message.id} className={`max-w-[80%] rounded-xl px-3 py-2 text-sm ${message.sender_id === Number(JSON.parse(localStorage.getItem('user') || '{}')?.id) ? 'ml-auto bg-blue-600 text-white' : 'bg-slate-100 text-slate-700'}`}>
+                        <p>{message.body}</p>
+                        <p className={`text-[10px] mt-1 ${message.sender_id === Number(JSON.parse(localStorage.getItem('user') || '{}')?.id) ? 'text-blue-100' : 'text-slate-400'}`}>
+                          {message.sender_name} • {new Date(message.created_at).toLocaleString()}
+                        </p>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                <form onSubmit={handleReplySubmit} className="border-t border-slate-200 pt-4 space-y-3">
+                  <textarea
+                    value={replyText}
+                    onChange={(e) => setReplyText(e.target.value)}
+                    rows={3}
+                    placeholder="Type your reply..."
+                    className="w-full p-3 border border-slate-300 rounded-xl text-sm"
+                  />
+                  <button type="submit" className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-semibold">Send Reply</button>
+                </form>
+              </>
+            ) : (
+              <p className="text-sm text-slate-500">Select a conversation to open the thread.</p>
+            )}
+          </div>
+        </div>
+        )}
       </main>
     </div>
   );

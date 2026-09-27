@@ -1295,6 +1295,13 @@ app.post('/api/payments/initialize', verifyToken, validate(schemas.paymentInit),
   try {
     const { studentId, amount, email, term } = req.body;
 
+    if (req.user.role === 'STUDENT') {
+      return res.status(403).json({
+        success: false,
+        message: 'Students cannot initialize fee payments directly. Please use the parent portal or contact the school office.'
+      });
+    }
+
     // Verify parent is linked to student before initializing payment
     if (req.user.role === 'PARENT') {
       const linkCheck = await (req.db || pool).query(
@@ -1433,6 +1440,256 @@ app.get('/api/payments/history', verifyToken, async (req, res) => {
        ORDER BY fp.created_at DESC`
     );
     res.json({ success: true, data: payments.rows });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/announcements', verifyToken, requireRole('ADMIN', 'SUPERADMIN'), async (req, res) => {
+  try {
+    const { title, message, visible_to_students, visible_to_parents, visible_to_teachers, event_date } = req.body;
+
+    if (!title || !message) {
+      return res.status(400).json({ success: false, message: 'Title and message are required.' });
+    }
+
+    if (event_date && !/^\d{4}-\d{2}-\d{2}$/.test(event_date)) {
+      return res.status(400).json({ success: false, message: 'event_date must be in YYYY-MM-DD format.' });
+    }
+
+    const result = await (req.db || pool).query(
+      `INSERT INTO announcements (title, message, created_by, visible_to_students, visible_to_parents, visible_to_teachers, event_date)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING *`,
+      [
+        String(title).trim(),
+        String(message).trim(),
+        req.user.id,
+        Boolean(visible_to_students),
+        Boolean(visible_to_parents),
+        Boolean(visible_to_teachers),
+        event_date || null
+      ]
+    );
+
+    res.status(201).json({ success: true, data: result.rows[0] });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/api/announcements', verifyToken, async (req, res) => {
+  try {
+    let whereClause = 'WHERE 1=1';
+    const role = req.user.role;
+
+    if (role === 'STUDENT') {
+      whereClause = 'WHERE visible_to_students = TRUE';
+    } else if (role === 'PARENT') {
+      whereClause = 'WHERE visible_to_parents = TRUE';
+    } else if (role === 'TEACHER') {
+      whereClause = 'WHERE visible_to_teachers = TRUE';
+    } else if (role === 'ADMIN' || role === 'SUPERADMIN') {
+      whereClause = 'WHERE visible_to_students = TRUE OR visible_to_parents = TRUE OR visible_to_teachers = TRUE';
+    }
+
+    const announcements = await (req.db || pool).query(
+      `SELECT a.*, u.full_name AS creator_name
+       FROM announcements a
+       JOIN users u ON a.created_by = u.id
+       ${whereClause}
+       ORDER BY a.created_at DESC`,
+      []
+    );
+
+    res.json({ success: true, data: announcements.rows });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/conversations', verifyToken, requireRole('PARENT'), async (req, res) => {
+  try {
+    const { studentId, recipientType, recipientTeacherId, subject, body } = req.body;
+
+    if (!subject || !body) {
+      return res.status(400).json({ success: false, message: 'Subject and message body are required.' });
+    }
+
+    if (!['TEACHER', 'BURSAR', 'PRINCIPAL'].includes(recipientType)) {
+      return res.status(400).json({ success: false, message: 'Recipient type must be TEACHER, BURSAR, or PRINCIPAL.' });
+    }
+
+    if (recipientType === 'TEACHER') {
+      if (!studentId || !recipientTeacherId) {
+        return res.status(400).json({ success: false, message: 'Student and teacher are required when messaging a teacher.' });
+      }
+
+      const linkCheck = await (req.db || pool).query(
+        `SELECT 1
+         FROM parent_student_links psl
+         JOIN students s ON s.id = psl.student_id
+         WHERE psl.parent_user_id = $1 AND psl.student_id = $2`,
+        [req.user.id, studentId]
+      );
+
+      if (linkCheck.rows.length === 0) {
+        return res.status(403).json({ success: false, message: 'You can only message teachers for your linked children.' });
+      }
+
+      const teacherMatch = await (req.db || pool).query(
+        `SELECT 1
+         FROM teachers t
+         JOIN classes c ON c.homeroom_teacher_id = t.user_id
+         WHERE t.id = $1 AND c.id = (
+           SELECT class_id FROM students WHERE id = $2
+         )`,
+        [recipientTeacherId, studentId]
+      );
+
+      if (teacherMatch.rows.length === 0) {
+        return res.status(400).json({ success: false, message: 'The selected teacher does not teach this student\'s class.' });
+      }
+    }
+
+    const conversationResult = await (req.db || pool).query(
+      `INSERT INTO conversations (subject, created_by, recipient_type, recipient_teacher_id, student_id)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING *`,
+      [String(subject).trim(), req.user.id, recipientType, recipientType === 'TEACHER' ? recipientTeacherId : null, studentId || null]
+    );
+
+    const conversation = conversationResult.rows[0];
+
+    await (req.db || pool).query(
+      `INSERT INTO messages (conversation_id, sender_id, body)
+       VALUES ($1, $2, $3)`,
+      [conversation.id, req.user.id, String(body).trim()]
+    );
+
+    res.status(201).json({ success: true, data: conversation });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/api/conversations', verifyToken, async (req, res) => {
+  try {
+    let query = `
+      SELECT c.*, 
+             u.full_name AS creator_name,
+             (SELECT COUNT(*) FROM messages m
+              WHERE m.conversation_id = c.id AND m.sender_id != $1 AND m.read_at IS NULL) AS unread_count
+      FROM conversations c
+      JOIN users u ON u.id = c.created_by
+      WHERE 1=1`;
+    const params = [req.user.id];
+
+    if (req.user.role === 'PARENT') {
+      query += ` AND c.created_by = $2`;
+      params.push(req.user.id);
+    } else if (req.user.role === 'TEACHER') {
+      const teacherRow = await (req.db || pool).query('SELECT id FROM teachers WHERE user_id = $1', [req.user.id]);
+      if (teacherRow.rows.length === 0) {
+        return res.json({ success: true, data: [] });
+      }
+      query += ` AND c.recipient_type = 'TEACHER' AND c.recipient_teacher_id = $2`;
+      params.push(teacherRow.rows[0].id);
+    } else if (req.user.role === 'ADMIN' || req.user.role === 'SUPERADMIN') {
+      query += ` AND c.recipient_type IN ('BURSAR', 'PRINCIPAL')`;
+    }
+
+    query += ` ORDER BY c.created_at DESC`;
+
+    const result = await (req.db || pool).query(query, params);
+    res.json({ success: true, data: result.rows });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/api/conversations/:id/messages', verifyToken, async (req, res) => {
+  try {
+    const conversationId = Number(req.params.id);
+
+    const conversationResult = await (req.db || pool).query(
+      `SELECT * FROM conversations WHERE id = $1`,
+      [conversationId]
+    );
+
+    if (conversationResult.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Conversation not found.' });
+    }
+
+    const conversation = conversationResult.rows[0];
+    const isParentCreator = conversation.created_by === req.user.id;
+    const isTeacherRecipient = req.user.role === 'TEACHER' && conversation.recipient_type === 'TEACHER' && conversation.recipient_teacher_id &&
+      await (req.db || pool).query('SELECT 1 FROM teachers WHERE id = $1 AND user_id = $2', [conversation.recipient_teacher_id, req.user.id]).then(r => r.rows.length > 0);
+
+    const isAdminRecipient = ['ADMIN', 'SUPERADMIN'].includes(req.user.role) && ['BURSAR', 'PRINCIPAL'].includes(conversation.recipient_type);
+
+    if (!isParentCreator && !(await isTeacherRecipient) && !isAdminRecipient) {
+      return res.status(403).json({ success: false, message: 'Access denied to this conversation.' });
+    }
+
+    await (req.db || pool).query(
+      `UPDATE messages
+       SET read_at = NOW()
+       WHERE conversation_id = $1 AND sender_id != $2 AND read_at IS NULL`,
+      [conversationId, req.user.id]
+    );
+
+    const messages = await (req.db || pool).query(
+      `SELECT m.*, u.full_name AS sender_name
+       FROM messages m
+       JOIN users u ON u.id = m.sender_id
+       WHERE m.conversation_id = $1
+       ORDER BY m.created_at ASC`,
+      [conversationId]
+    );
+
+    res.json({ success: true, data: messages.rows });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/conversations/:id/messages', verifyToken, async (req, res) => {
+  try {
+    const conversationId = Number(req.params.id);
+    const { body } = req.body;
+
+    if (!body || !String(body).trim()) {
+      return res.status(400).json({ success: false, message: 'Message body is required.' });
+    }
+
+    const conversationResult = await (req.db || pool).query(
+      `SELECT * FROM conversations WHERE id = $1`,
+      [conversationId]
+    );
+
+    if (conversationResult.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Conversation not found.' });
+    }
+
+    const conversation = conversationResult.rows[0];
+    const isParentCreator = conversation.created_by === req.user.id;
+    const isTeacherRecipient = req.user.role === 'TEACHER' && conversation.recipient_type === 'TEACHER' && conversation.recipient_teacher_id &&
+      (await (req.db || pool).query('SELECT 1 FROM teachers WHERE id = $1 AND user_id = $2', [conversation.recipient_teacher_id, req.user.id])).rows.length > 0;
+    const isAdminRecipient = ['ADMIN', 'SUPERADMIN'].includes(req.user.role) && ['BURSAR', 'PRINCIPAL'].includes(conversation.recipient_type);
+
+    if (!isParentCreator && !isTeacherRecipient && !isAdminRecipient) {
+      return res.status(403).json({ success: false, message: 'You are not allowed to reply in this conversation.' });
+    }
+
+    const message = await (req.db || pool).query(
+      `INSERT INTO messages (conversation_id, sender_id, body)
+       VALUES ($1, $2, $3)
+       RETURNING *`,
+      [conversationId, req.user.id, String(body).trim()]
+    );
+
+    res.status(201).json({ success: true, data: message.rows[0] });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }

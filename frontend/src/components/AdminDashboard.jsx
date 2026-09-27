@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { Users, UserCheck, FileText, CreditCard, CheckCircle, GraduationCap, ArrowLeft, LogOut, Menu, X } from 'lucide-react';
+import { Users, UserCheck, FileText, CreditCard, CheckCircle, GraduationCap, ArrowLeft, LogOut, Menu, X, Clock, RefreshCw, Bell, MessageSquareText } from 'lucide-react';
 
 import StudentsModule from './StudentsModule';
 import StaffModule from './StaffModule';
@@ -8,6 +8,7 @@ import ReportsModule from './ReportsModule';
 import PaymentsModule from './PaymentsModule';
 import PayrollModule from './PayrollModule';
 import API from '../opi';
+import { formatDateTime } from '../utils/pdfUtils';
 
 export default function AdminDashboard() {
   const navigate = useNavigate();
@@ -19,6 +20,20 @@ export default function AdminDashboard() {
   const [loadingStaff, setLoadingStaff] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
   const [reportData, setReportData] = useState(null);
+  const [pendingPayments, setPendingPayments] = useState([]);
+  const [verifyingRef, setVerifyingRef] = useState('');
+  const [announcementForm, setAnnouncementForm] = useState({
+    title: '',
+    message: '',
+    visible_to_students: true,
+    visible_to_parents: true,
+    visible_to_teachers: true,
+    event_date: ''
+  });
+  const [conversations, setConversations] = useState([]);
+  const [selectedConversationId, setSelectedConversationId] = useState('');
+  const [conversationThread, setConversationThread] = useState([]);
+  const [replyText, setReplyText] = useState('');
 
   // Fetch Students
   const fetchStudents = async () => {
@@ -50,10 +65,69 @@ export default function AdminDashboard() {
     }
   };
 
+  const fetchPendingPayments = async () => {
+    try {
+      const res = await API.get('/payments/history');
+      const list = Array.isArray(res.data?.data) ? res.data.data : [];
+      setPendingPayments(list.filter((payment) => payment.status === 'PENDING'));
+    } catch (err) {
+      console.error('Error fetching pending payments:', err);
+      setPendingPayments([]);
+    }
+  };
+
+  const fetchConversations = async () => {
+    try {
+      const res = await API.get('/conversations');
+      const list = Array.isArray(res.data?.data) ? res.data.data : [];
+      setConversations(list);
+      if (list.length > 0 && !selectedConversationId) {
+        setSelectedConversationId(String(list[0].id));
+      }
+    } catch (err) {
+      setConversations([]);
+    }
+  };
+
+  const fetchConversationThread = async (conversationId) => {
+    if (!conversationId) return;
+    try {
+      const res = await API.get(`/conversations/${conversationId}/messages`);
+      setConversationThread(Array.isArray(res.data?.data) ? res.data.data : []);
+    } catch (err) {
+      setConversationThread([]);
+    }
+  };
+
+  const handleVerifyPending = async (reference) => {
+    try {
+      setVerifyingRef(reference);
+      const res = await API.get(`/payments/verify/${reference}`);
+      if (res.data.success) {
+        showNotification('success', 'Payment verified successfully! Status updated.');
+      } else {
+        showNotification('error', res.data.message || 'Payment is still pending or unconfirmed.');
+      }
+      await fetchPendingPayments();
+    } catch (err) {
+      showNotification('error', err.response?.data?.message || 'Could not verify payment status.');
+    } finally {
+      setVerifyingRef('');
+    }
+  };
+
   useEffect(() => {
     fetchStudents();
     fetchTeachers();
+    fetchPendingPayments();
+    fetchConversations();
   }, []);
+
+  useEffect(() => {
+    if (selectedConversationId) {
+      fetchConversationThread(selectedConversationId);
+    }
+  }, [selectedConversationId]);
 
   const showNotification = (type, text) => {
     setMessage({ type, text });
@@ -147,6 +221,42 @@ export default function AdminDashboard() {
     }
   };
 
+  const handleAnnouncementSubmit = async (e) => {
+    e.preventDefault();
+    try {
+      await API.post('/announcements', {
+        ...announcementForm,
+        visible_to_students: Boolean(announcementForm.visible_to_students),
+        visible_to_parents: Boolean(announcementForm.visible_to_parents),
+        visible_to_teachers: Boolean(announcementForm.visible_to_teachers)
+      });
+      showNotification('success', 'Announcement posted successfully.');
+      setAnnouncementForm({
+        title: '',
+        message: '',
+        visible_to_students: true,
+        visible_to_parents: true,
+        visible_to_teachers: true,
+        event_date: ''
+      });
+    } catch (err) {
+      showNotification('error', err.response?.data?.message || err.response?.data?.error || 'Failed to post announcement');
+    }
+  };
+
+  const handleReplySubmit = async (e) => {
+    e.preventDefault();
+    if (!selectedConversationId || !replyText.trim()) return;
+    try {
+      await API.post(`/conversations/${selectedConversationId}/messages`, { body: replyText });
+      setReplyText('');
+      fetchConversationThread(selectedConversationId);
+      fetchConversations();
+    } catch (err) {
+      showNotification('error', err.response?.data?.message || 'Failed to send message');
+    }
+  };
+
   return (
     <div className="flex h-screen bg-gray-100 font-sans overflow-hidden">
       {/* Mobile Backdrop Overlay */}
@@ -202,6 +312,18 @@ export default function AdminDashboard() {
             className={`flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition ${activeTab === 'payments' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-slate-800'}`}
           >
             <CreditCard className="h-5 w-5" /> Fee Payments
+          </button>
+          <button 
+            onClick={() => handleTabSelect('announcements')}
+            className={`flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition ${activeTab === 'announcements' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-slate-800'}`}
+          >
+            <Bell className="h-5 w-5" /> Announcements
+          </button>
+          <button 
+            onClick={() => handleTabSelect('messages')}
+            className={`flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition ${activeTab === 'messages' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-slate-800'}`}
+          >
+            <MessageSquareText className="h-5 w-5" /> Messages
           </button>
           <button 
             onClick={() => handleTabSelect('payroll')}
@@ -284,10 +406,91 @@ export default function AdminDashboard() {
         )}
 
         {activeTab === 'payments' && (
-          <PaymentsModule 
-            students={students} 
-            onProcessPayment={handlePaymentSubmit} 
-          />
+          <div className="space-y-6">
+            {pendingPayments.length > 0 && (
+              <div className="bg-amber-50 border border-amber-200 rounded-2xl p-6 shadow-sm">
+                <div className="flex items-center gap-2 mb-3">
+                  <Clock className="h-5 w-5 text-amber-600" />
+                  <h3 className="text-base font-bold text-amber-900">Pending Fee Payments</h3>
+                </div>
+                <p className="text-xs text-amber-700 mb-4">
+                  These payments were initiated but have not yet been marked as completed. If you already completed payment on Paystack, click <strong>Check Status Now</strong> to update the system.
+                </p>
+                <div className="divide-y divide-amber-200/70 border-t border-amber-200">
+                  {pendingPayments.map((payment) => (
+                    <div key={payment.id} className="py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div>
+                        <p className="text-xs font-mono font-bold text-slate-800">{payment.reference}</p>
+                        <p className="text-xs text-slate-600 mt-0.5">
+                          {payment.term || 'First Term'} • <strong className="text-slate-900">₦{parseFloat(payment.amount).toLocaleString()}</strong> • Initiated: {formatDateTime(payment.created_at)}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => handleVerifyPending(payment.reference)}
+                        disabled={verifyingRef === payment.reference}
+                        className="self-start sm:self-auto flex items-center gap-1.5 text-xs font-bold text-amber-900 bg-amber-200/80 hover:bg-amber-300 px-3.5 py-1.5 rounded-lg transition disabled:opacity-50"
+                      >
+                        <RefreshCw className={`h-3.5 w-3.5 ${verifyingRef === payment.reference ? 'animate-spin' : ''}`} />
+                        {verifyingRef === payment.reference ? 'Verifying...' : 'Check Status Now'}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <PaymentsModule 
+              students={students} 
+              onProcessPayment={handlePaymentSubmit} 
+            />
+          </div>
+        )}
+
+        {activeTab === 'announcements' && (
+          <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 max-w-2xl">
+            <h3 className="text-lg font-bold text-slate-800 mb-4">Post Announcement</h3>
+            <form onSubmit={handleAnnouncementSubmit} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Title</label>
+                <input
+                  type="text"
+                  value={announcementForm.title}
+                  onChange={(e) => setAnnouncementForm({ ...announcementForm, title: e.target.value })}
+                  className="w-full p-2.5 border border-slate-300 rounded-lg text-sm"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Message</label>
+                <textarea
+                  value={announcementForm.message}
+                  onChange={(e) => setAnnouncementForm({ ...announcementForm, message: e.target.value })}
+                  rows={5}
+                  className="w-full p-2.5 border border-slate-300 rounded-lg text-sm"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Event Date (optional)</label>
+                <input
+                  type="date"
+                  value={announcementForm.event_date}
+                  onChange={(e) => setAnnouncementForm({ ...announcementForm, event_date: e.target.value })}
+                  className="w-full p-2.5 border border-slate-300 rounded-lg text-sm"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={announcementForm.visible_to_students} onChange={(e) => setAnnouncementForm({ ...announcementForm, visible_to_students: e.target.checked })} /> Visible to Students</label>
+                <label className="flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={announcementForm.visible_to_parents} onChange={(e) => setAnnouncementForm({ ...announcementForm, visible_to_parents: e.target.checked })} /> Visible to Parents</label>
+                <label className="flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={announcementForm.visible_to_teachers} onChange={(e) => setAnnouncementForm({ ...announcementForm, visible_to_teachers: e.target.checked })} /> Visible to Teachers</label>
+              </div>
+
+              <button type="submit" className="bg-blue-600 text-white px-4 py-2.5 rounded-lg text-sm font-semibold">Publish Announcement</button>
+            </form>
+          </div>
         )}
 
         {activeTab === 'payroll' && (
@@ -296,6 +499,72 @@ export default function AdminDashboard() {
             onProcessPayroll={handlePayrollSubmit} 
           />
         )}
+
+        {activeTab === 'messages' && (
+          <div className="grid grid-cols-1 xl:grid-cols-[0.95fr_1.25fr] gap-6">
+            <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
+              <h3 className="text-lg font-bold text-slate-800 mb-4">School Messages</h3>
+              <div className="space-y-3">
+                {conversations.length === 0 ? (
+                  <p className="text-sm text-slate-500">No Bursar or Principal conversations available.</p>
+                ) : (
+                  conversations.map((conversation) => (
+                    <button
+                      key={conversation.id}
+                      type="button"
+                      onClick={() => setSelectedConversationId(String(conversation.id))}
+                      className={`w-full text-left rounded-xl border p-3 ${selectedConversationId === String(conversation.id) ? 'border-blue-500 bg-blue-50' : 'border-slate-200 bg-slate-50'}`}
+                    >
+                      <div className="flex justify-between gap-3 items-center">
+                        <strong className="text-sm text-slate-800">{conversation.subject}</strong>
+                        {Number(conversation.unread_count || 0) > 0 && (
+                          <span className="bg-red-500 text-white text-[10px] px-1.5 py-0.5 rounded-full">{conversation.unread_count}</span>
+                        )}
+                      </div>
+                      <p className="text-xs text-slate-500 mt-1">{conversation.recipient_type} • from {conversation.creator_name}</p>
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
+
+            <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
+              <h3 className="text-lg font-bold text-slate-800 mb-4">Thread</h3>
+              {selectedConversationId ? (
+                <>
+                  <div className="space-y-3 max-h-[360px] overflow-y-auto mb-4">
+                    {conversationThread.length === 0 ? (
+                      <p className="text-sm text-slate-500">No messages in this thread yet.</p>
+                    ) : (
+                      conversationThread.map((message) => (
+                        <div key={message.id} className={`max-w-[80%] rounded-xl px-3 py-2 text-sm ${message.sender_id === Number(JSON.parse(localStorage.getItem('user') || '{}')?.id) ? 'ml-auto bg-blue-600 text-white' : 'bg-slate-100 text-slate-700'}`}>
+                          <p>{message.body}</p>
+                          <p className={`text-[10px] mt-1 ${message.sender_id === Number(JSON.parse(localStorage.getItem('user') || '{}')?.id) ? 'text-blue-100' : 'text-slate-400'}`}>
+                            {message.sender_name} • {formatDateTime(message.created_at)}
+                          </p>
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                  <form onSubmit={handleReplySubmit} className="space-y-3 border-t border-slate-200 pt-4">
+                    <textarea
+                      value={replyText}
+                      onChange={(e) => setReplyText(e.target.value)}
+                      rows={3}
+                      placeholder="Type your reply..."
+                      className="w-full rounded-xl border border-slate-300 p-3 text-sm"
+                    />
+                    <button type="submit" className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-semibold">Send Reply</button>
+                  </form>
+                </>
+              ) : (
+                <p className="text-sm text-slate-500">Select a conversation to view the thread.</p>
+              )}
+            </div>
+          </div>
+        )}
+
       </main>
     </div>
   );

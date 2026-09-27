@@ -123,7 +123,41 @@ CREATE TABLE IF NOT EXISTS fee_payments (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- 10. Staff Payroll Table
+-- 10. Announcements Table
+CREATE TABLE IF NOT EXISTS announcements (
+    id SERIAL PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    message TEXT NOT NULL,
+    created_by INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    visible_to_students BOOLEAN DEFAULT FALSE,
+    visible_to_parents BOOLEAN DEFAULT FALSE,
+    visible_to_teachers BOOLEAN DEFAULT FALSE,
+    event_date DATE
+);
+
+-- 11. Conversations Table
+CREATE TABLE IF NOT EXISTS conversations (
+    id SERIAL PRIMARY KEY,
+    subject VARCHAR(255) NOT NULL,
+    created_by INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    recipient_type VARCHAR(20) NOT NULL CHECK (recipient_type IN ('TEACHER', 'BURSAR', 'PRINCIPAL')),
+    recipient_teacher_id INT REFERENCES teachers(id) ON DELETE SET NULL,
+    student_id INT REFERENCES students(id) ON DELETE SET NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 12. Messages Table
+CREATE TABLE IF NOT EXISTS messages (
+    id SERIAL PRIMARY KEY,
+    conversation_id INT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    sender_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    body TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    read_at TIMESTAMP NULL
+);
+
+-- 13. Staff Payroll Table
 CREATE TABLE IF NOT EXISTS payroll (
     id SERIAL PRIMARY KEY,
     staff_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

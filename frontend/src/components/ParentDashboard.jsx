@@ -14,6 +14,19 @@ export default function ParentDashboard() {
   const [paymentForm, setPaymentForm] = useState({ amount: '85000', term: 'First Term 2026' });
   const [paymentLoading, setPaymentLoading] = useState(false);
   const [verifyingRef, setVerifyingRef] = useState('');
+  const [announcements, setAnnouncements] = useState([]);
+  const [teachers, setTeachers] = useState([]);
+  const [conversations, setConversations] = useState([]);
+  const [selectedConversationId, setSelectedConversationId] = useState('');
+  const [conversationThread, setConversationThread] = useState([]);
+  const [replyText, setReplyText] = useState('');
+  const [messageForm, setMessageForm] = useState({
+    recipientType: 'TEACHER',
+    studentId: '',
+    recipientTeacherId: '',
+    subject: '',
+    body: ''
+  });
 
   const fetchChildren = async () => {
     try {
@@ -29,6 +42,38 @@ export default function ParentDashboard() {
       setError(err.response?.data?.message || 'Failed to fetch linked children.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchTeachers = async () => {
+    try {
+      const res = await API.get('/teachers');
+      setTeachers(Array.isArray(res.data?.data) ? res.data.data : []);
+    } catch (err) {
+      setTeachers([]);
+    }
+  };
+
+  const fetchConversations = async () => {
+    try {
+      const res = await API.get('/conversations');
+      const list = Array.isArray(res.data?.data) ? res.data.data : [];
+      setConversations(list);
+      if (list.length > 0 && !selectedConversationId) {
+        setSelectedConversationId(String(list[0].id));
+      }
+    } catch (err) {
+      setConversations([]);
+    }
+  };
+
+  const fetchConversationThread = async (conversationId) => {
+    if (!conversationId) return;
+    try {
+      const res = await API.get(`/conversations/${conversationId}/messages`);
+      setConversationThread(Array.isArray(res.data?.data) ? res.data.data : []);
+    } catch (err) {
+      setConversationThread([]);
     }
   };
 
@@ -53,9 +98,27 @@ export default function ParentDashboard() {
     }
   };
 
+  const fetchAnnouncements = async () => {
+    try {
+      const res = await API.get('/announcements');
+      setAnnouncements(Array.isArray(res.data?.data) ? res.data.data : []);
+    } catch (err) {
+      setAnnouncements([]);
+    }
+  };
+
   useEffect(() => {
     fetchChildren();
+    fetchAnnouncements();
+    fetchTeachers();
+    fetchConversations();
   }, []);
+
+  useEffect(() => {
+    if (selectedConversationId) {
+      fetchConversationThread(selectedConversationId);
+    }
+  }, [selectedConversationId]);
 
   const handleLogout = () => {
     localStorage.removeItem('token');
@@ -66,6 +129,48 @@ export default function ParentDashboard() {
   const showNotification = (type, text) => {
     setNotification({ type, text });
     setTimeout(() => setNotification({ type: '', text: '' }), 4000);
+  };
+
+  const handleCreateConversation = async (e) => {
+    e.preventDefault();
+    try {
+      const payload = {
+        ...messageForm,
+        recipientType: messageForm.recipientType,
+        studentId: messageForm.recipientType === 'TEACHER' ? Number(messageForm.studentId) : null,
+        recipientTeacherId: messageForm.recipientType === 'TEACHER' ? Number(messageForm.recipientTeacherId) : null,
+        subject: messageForm.subject,
+        body: messageForm.body
+      };
+
+      const res = await API.post('/conversations', payload);
+      if (res.data.success) {
+        showNotification('success', 'Message sent successfully.');
+        setMessageForm({
+          recipientType: 'TEACHER',
+          studentId: '',
+          recipientTeacherId: '',
+          subject: '',
+          body: ''
+        });
+        fetchConversations();
+      }
+    } catch (err) {
+      showNotification('error', err.response?.data?.message || 'Failed to send message');
+    }
+  };
+
+  const handleReplySubmit = async (e) => {
+    e.preventDefault();
+    if (!selectedConversationId || !replyText.trim()) return;
+    try {
+      await API.post(`/conversations/${selectedConversationId}/messages`, { body: replyText });
+      setReplyText('');
+      fetchConversationThread(selectedConversationId);
+      fetchConversations();
+    } catch (err) {
+      showNotification('error', err.response?.data?.message || 'Failed to send reply');
+    }
   };
 
   const handleChildPayment = async (child) => {
@@ -99,6 +204,9 @@ export default function ParentDashboard() {
   }
 
   const selectedChild = children.find(c => c.id === selectedChildId) || children[0];
+  const upcomingEvents = [...announcements]
+    .filter((item) => item.event_date)
+    .sort((a, b) => new Date(a.event_date) - new Date(b.event_date));
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
@@ -139,6 +247,81 @@ export default function ParentDashboard() {
             <span>{error}</span>
           </div>
         )}
+
+        {selectedChild && selectedChild.paymentHistory?.filter((p) => p.status === 'PENDING').length > 0 && (
+          <div className="mb-6 bg-amber-50 border border-amber-200 rounded-2xl p-6 shadow-sm">
+            <div className="flex items-center gap-2 mb-3">
+              <Clock className="h-5 w-5 text-amber-600" />
+              <h3 className="text-base font-bold text-amber-900">Pending Payments</h3>
+            </div>
+            <p className="text-xs text-amber-700 mb-4">
+              These payments were initiated but have not yet been marked as completed. If you already completed payment on Paystack, click <strong>Check Status Now</strong> to update the system.
+            </p>
+            <div className="divide-y divide-amber-200/70 border-t border-amber-200">
+              {selectedChild.paymentHistory.filter((p) => p.status === 'PENDING').map((p) => (
+                <div key={p.id} className="py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-mono font-bold text-slate-800">{p.reference}</p>
+                    <p className="text-xs text-slate-600 mt-0.5">
+                      {p.term || 'First Term'} • <strong className="text-slate-900">₦{parseFloat(p.amount).toLocaleString()}</strong> • Initiated: {formatDateTime(p.created_at)}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => handleVerifyPending(p.reference)}
+                    disabled={verifyingRef === p.reference}
+                    className="self-start sm:self-auto flex items-center gap-1.5 text-xs font-bold text-amber-900 bg-amber-200/80 hover:bg-amber-300 px-3.5 py-1.5 rounded-lg transition disabled:opacity-50"
+                  >
+                    <RefreshCw className={`h-3.5 w-3.5 ${verifyingRef === p.reference ? 'animate-spin' : ''}`} />
+                    {verifyingRef === p.reference ? 'Verifying...' : 'Check Status Now'}
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="mb-8 grid grid-cols-1 xl:grid-cols-[1.4fr_0.6fr] gap-6">
+          <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+            <h3 className="text-lg font-bold text-slate-800 mb-3">School Announcements</h3>
+            {announcements.length === 0 ? (
+              <p className="text-sm text-slate-500">No announcements are currently visible to your role.</p>
+            ) : (
+              <div className="space-y-3">
+                {announcements.map((announcement) => (
+                  <div key={announcement.id} className="border border-slate-200 rounded-xl p-3 bg-slate-50">
+                    <div className="flex justify-between items-start gap-3 mb-1">
+                      <p className="font-semibold text-slate-800">{announcement.title}</p>
+                      {announcement.event_date && (
+                        <span className="text-[11px] font-medium bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">
+                          {new Date(announcement.event_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-sm text-slate-600 whitespace-pre-wrap">{announcement.message}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+            <h3 className="text-lg font-bold text-slate-800 mb-3">Upcoming Events</h3>
+            {upcomingEvents.length === 0 ? (
+              <p className="text-sm text-slate-500">No upcoming events scheduled.</p>
+            ) : (
+              <div className="space-y-3">
+                {upcomingEvents.map((event) => (
+                  <div key={event.id} className="border border-blue-200 rounded-xl p-3 bg-blue-50">
+                    <p className="font-semibold text-slate-800">{event.title}</p>
+                    <p className="text-xs text-blue-700 mt-1">
+                      {new Date(event.event_date).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
 
         {children.length === 0 ? (
           <div className="bg-white rounded-2xl p-12 text-center border border-slate-200 shadow-sm max-w-xl mx-auto">
@@ -264,7 +447,7 @@ export default function ParentDashboard() {
                             <th className="pb-3">Term</th>
                             <th className="pb-3">Amount</th>
                             <th className="pb-3">Status</th>
-                            <th className="pb-3">Date</th>
+                            <th className="pb-3">Date &amp; Time</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 text-slate-700">
@@ -275,13 +458,13 @@ export default function ParentDashboard() {
                               <td className="py-3 font-bold">₦{parseFloat(p.amount).toLocaleString()}</td>
                               <td className="py-3">
                                 <span className={`px-2 py-0.5 rounded text-xs font-semibold ${
-                                  p.status === 'SUCCESS' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                                  p.status === 'SUCCESS' ? 'bg-emerald-100 text-emerald-800' : p.status === 'FAILED' ? 'bg-red-100 text-red-800' : 'bg-amber-100 text-amber-800'
                                 }`}>
-                                  {p.status}
+                                  {p.status === 'SUCCESS' ? 'Confirmed' : p.status === 'FAILED' ? 'Failed' : 'Pending'}
                                 </span>
                               </td>
                               <td className="py-3 text-xs text-slate-400">
-                                {new Date(p.created_at).toLocaleDateString()}
+                                {formatDateTime(p.created_at)}
                               </td>
                             </tr>
                           ))}
@@ -309,6 +492,140 @@ export default function ParentDashboard() {
             )}
           </div>
         )}
+
+        <div className="mt-8 grid grid-cols-1 xl:grid-cols-[0.95fr_1.25fr] gap-6">
+          <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
+            <h3 className="text-lg font-bold text-slate-800 mb-4">Messages</h3>
+            <form onSubmit={handleCreateConversation} className="space-y-3 mb-5">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Recipient</label>
+                <select
+                  value={messageForm.recipientType}
+                  onChange={(e) => setMessageForm({ ...messageForm, recipientType: e.target.value })}
+                  className="w-full p-2.5 border border-slate-300 rounded-lg text-sm"
+                >
+                  <option value="TEACHER">Class Teacher</option>
+                  <option value="BURSAR">Bursar</option>
+                  <option value="PRINCIPAL">Principal</option>
+                </select>
+              </div>
+
+              {messageForm.recipientType === 'TEACHER' && (
+                <>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">Student</label>
+                    <select
+                      value={messageForm.studentId}
+                      onChange={(e) => setMessageForm({ ...messageForm, studentId: e.target.value })}
+                      className="w-full p-2.5 border border-slate-300 rounded-lg text-sm"
+                    >
+                      <option value="">Select child</option>
+                      {children.map((child) => (
+                        <option key={child.id} value={child.id}>{child.full_name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">Teacher</label>
+                    <select
+                      value={messageForm.recipientTeacherId}
+                      onChange={(e) => setMessageForm({ ...messageForm, recipientTeacherId: e.target.value })}
+                      className="w-full p-2.5 border border-slate-300 rounded-lg text-sm"
+                    >
+                      <option value="">Select teacher</option>
+                      {teachers.map((teacher) => (
+                        <option key={teacher.teacher_record_id || teacher.id} value={teacher.teacher_record_id || teacher.id}>{teacher.full_name}</option>
+                      ))}
+                    </select>
+                  </div>
+                </>
+              )}
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Subject</label>
+                <input
+                  type="text"
+                  value={messageForm.subject}
+                  onChange={(e) => setMessageForm({ ...messageForm, subject: e.target.value })}
+                  className="w-full p-2.5 border border-slate-300 rounded-lg text-sm"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Message</label>
+                <textarea
+                  value={messageForm.body}
+                  onChange={(e) => setMessageForm({ ...messageForm, body: e.target.value })}
+                  rows={4}
+                  className="w-full p-2.5 border border-slate-300 rounded-lg text-sm"
+                  required
+                />
+              </div>
+
+              <button type="submit" className="w-full bg-blue-600 text-white px-4 py-2.5 rounded-lg text-sm font-semibold">Send Message</button>
+            </form>
+
+            <div className="space-y-3 border-t border-slate-200 pt-4">
+              <h4 className="text-sm font-bold text-slate-700">Recent Conversations</h4>
+              {conversations.length === 0 ? (
+                <p className="text-sm text-slate-500">No conversations yet.</p>
+              ) : (
+                conversations.map((conversation) => (
+                  <button
+                    key={conversation.id}
+                    type="button"
+                    onClick={() => setSelectedConversationId(String(conversation.id))}
+                    className={`w-full text-left rounded-xl border p-3 ${selectedConversationId === String(conversation.id) ? 'border-blue-500 bg-blue-50' : 'border-slate-200 bg-slate-50'}`}
+                  >
+                    <div className="flex justify-between gap-3 items-center">
+                      <strong className="text-sm text-slate-800">{conversation.subject}</strong>
+                      {Number(conversation.unread_count || 0) > 0 && (
+                        <span className="bg-red-500 text-white text-[10px] px-1.5 py-0.5 rounded-full">{conversation.unread_count}</span>
+                      )}
+                    </div>
+                    <p className="text-xs text-slate-500 mt-1">{conversation.recipient_type} • {conversation.creator_name}</p>
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
+            <h3 className="text-lg font-bold text-slate-800 mb-4">Thread</h3>
+            {selectedConversationId ? (
+              <>
+                <div className="space-y-3 max-h-[360px] overflow-y-auto mb-4">
+                  {conversationThread.length === 0 ? (
+                    <p className="text-sm text-slate-500">No replies yet.</p>
+                  ) : (
+                    conversationThread.map((message) => (
+                      <div key={message.id} className={`max-w-[80%] rounded-xl px-3 py-2 text-sm ${message.sender_id === Number(JSON.parse(localStorage.getItem('user') || '{}')?.id) ? 'ml-auto bg-blue-600 text-white' : 'bg-slate-100 text-slate-700'}`}>
+                        <p>{message.body}</p>
+                        <p className={`text-[10px] mt-1 ${message.sender_id === Number(JSON.parse(localStorage.getItem('user') || '{}')?.id) ? 'text-blue-100' : 'text-slate-400'}`}>
+                          {message.sender_name} • {formatDateTime(message.created_at)}
+                        </p>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                <form onSubmit={handleReplySubmit} className="border-t border-slate-200 pt-4 space-y-3">
+                  <textarea
+                    value={replyText}
+                    onChange={(e) => setReplyText(e.target.value)}
+                    rows={3}
+                    placeholder="Reply to this conversation..."
+                    className="w-full p-3 border border-slate-300 rounded-xl text-sm"
+                  />
+                  <button type="submit" className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-semibold">Send Reply</button>
+                </form>
+              </>
+            ) : (
+              <p className="text-sm text-slate-500">Select a conversation to open the thread.</p>
+            )}
+          </div>
+        </div>
       </main>
     </div>
   );

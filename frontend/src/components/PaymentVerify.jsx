@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useSearchParams, useNavigate, Link } from 'react-router-dom';
 import { CheckCircle, AlertCircle, Loader2, ArrowLeft, Receipt, ExternalLink, Download } from 'lucide-react';
 import API from '../opi';
-import { downloadReceiptPDF } from '../utils/pdfUtils';
+import { downloadReceiptPDF, formatDateTime } from '../utils/pdfUtils';
 
 export default function PaymentVerify() {
   const [searchParams] = useSearchParams();
@@ -114,6 +114,12 @@ export default function PaymentVerify() {
                   <span className="text-white font-medium">{paymentDetails.payment.term}</span>
                 </div>
               )}
+              <div className="flex justify-between items-center text-slate-400">
+                <span>Date Processed</span>
+                <span className="text-white font-medium">
+                  {formatDateTime(paymentDetails?.paidAt || paymentDetails?.payment?.created_at || paymentDetails?.created_at || new Date().toISOString())}
+                </span>
+              </div>
               <div className="flex justify-between items-center text-slate-400 pt-2 border-t border-slate-800">
                 <span>Status</span>
                 <span className="bg-emerald-900/60 text-emerald-300 font-semibold px-2 py-0.5 rounded border border-emerald-700/50">
@@ -130,7 +136,7 @@ export default function PaymentVerify() {
                 <ArrowLeft className="h-4 w-4" /> Return to Dashboard
               </button>
               <button
-                onClick={() => downloadReceiptPDF({ ...paymentDetails, reference })}
+                onClick={() => downloadReceiptPDF({ ...paymentDetails, reference, paidAt: paymentDetails?.paidAt || paymentDetails?.payment?.created_at || paymentDetails?.created_at || new Date().toISOString() })}
                 className="w-full py-2.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm font-semibold transition flex items-center justify-center gap-2"
               >
                 <Download className="h-4 w-4" /> Download Receipt PDF
