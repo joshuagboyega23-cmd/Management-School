@@ -14,6 +14,7 @@ export default function StudentDashboard() {
   const [notification, setNotification] = useState({ type: '', text: '' });
   const [feeHistory, setFeeHistory] = useState([]);
   const [announcements, setAnnouncements] = useState([]);
+  const student = data?.student;
 
   const fetchStudentData = async () => {
     try {
@@ -110,7 +111,6 @@ export default function StudentDashboard() {
     );
   }
 
-  const student = data?.student;
   const reportCards = data?.reportCards || [];
   const payments = data?.payments || [];
   const upcomingEvents = [...announcements]
