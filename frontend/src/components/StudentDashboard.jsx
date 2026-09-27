@@ -223,7 +223,6 @@ export default function StudentDashboard() {
           </div>
         </div>
 
-        {/* Navigation Tabs */}
         <div className="flex gap-3 mb-6 border-b border-slate-200 pb-3">
           <button
             onClick={() => setActiveTab('grades')}
@@ -354,44 +353,47 @@ export default function StudentDashboard() {
               {feeHistory.length === 0 ? (
                 <p className="text-sm text-slate-500 py-6 text-center">No fee transaction history has been recorded yet.</p>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse text-sm">
-                    <thead>
-                      <tr className="border-b border-slate-200 text-slate-500 font-medium">
-                        <th className="pb-3">Term</th>
-                        <th className="pb-3">Amount</th>
-                        <th className="pb-3">Date &amp; Time</th>
-                        <th className="pb-3">Status</th>
-                        <th className="pb-3">Receipt</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 text-slate-700">
-                      {feeHistory.map((p) => (
-                        <tr key={p.id}>
-                          <td className="py-3">{p.term || 'First Term'}</td>
-                          <td className="py-3 font-bold">₦{parseFloat(p.amount).toLocaleString()}</td>
-                          <td className="py-3 text-xs text-slate-500">{formatDateTime(p.created_at)}</td>
-                          <td className="py-3">
-                            <span className={`px-2 py-0.5 rounded text-xs font-semibold ${
-                              p.status === 'SUCCESS' ? 'bg-emerald-100 text-emerald-800' : p.status === 'FAILED' ? 'bg-red-100 text-red-800' : 'bg-amber-100 text-amber-800'
-                            }`}>
-                              {p.status === 'SUCCESS' ? 'Confirmed' : p.status === 'FAILED' ? 'Failed' : 'Pending'}
-                            </span>
-                          </td>
-                          <td className="py-3">
-                            {p.status === 'SUCCESS' && (
-                              <button
-                                onClick={() => downloadReceiptPDF({ ...p, reference: p.reference, amount: p.amount, term: p.term, paidAt: p.created_at })}
-                                className="text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-2.5 py-1.5 rounded-lg transition"
-                              >
-                                Download Receipt
-                              </button>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div className="space-y-3">
+                  {feeHistory.map((p) => (
+                    <div
+                      key={p.id}
+                      className="grid grid-cols-2 items-center gap-x-5 gap-y-3 rounded-lg border border-slate-200 bg-slate-50/50 p-4 text-sm sm:grid-cols-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(8rem,0.85fr)_minmax(12rem,1.3fr)_minmax(7rem,0.7fr)_minmax(10rem,auto)]"
+                    >
+                      <div className="min-w-0">
+                        <p className="mb-1 text-[11px] font-semibold text-slate-500">Term</p>
+                        <p className="break-words text-slate-800">{p.term || 'First Term'}</p>
+                      </div>
+                      <div className="min-w-0">
+                        <p className="mb-1 text-[11px] font-semibold text-slate-500">Amount</p>
+                        <p className="font-bold text-slate-900">₦{parseFloat(p.amount).toLocaleString()}</p>
+                      </div>
+                      <div className="col-span-2 min-w-0 sm:col-span-2 xl:col-span-1">
+                        <p className="mb-1 text-[11px] font-semibold text-slate-500">Date &amp; Time</p>
+                        <p className="break-words text-xs text-slate-600">{formatDateTime(p.created_at)}</p>
+                      </div>
+                      <div className="min-w-0">
+                        <p className="mb-1 text-[11px] font-semibold text-slate-500">Status</p>
+                        <span className={`inline-flex px-2 py-1 rounded text-xs font-semibold ${
+                          p.status === 'SUCCESS' ? 'bg-emerald-100 text-emerald-800' : p.status === 'FAILED' ? 'bg-red-100 text-red-800' : 'bg-amber-100 text-amber-800'
+                        }`}>
+                          {p.status === 'SUCCESS' ? 'Confirmed' : p.status === 'FAILED' ? 'Failed' : 'Pending'}
+                        </span>
+                      </div>
+                      <div className="col-span-2 flex items-center justify-between gap-3 sm:col-span-2 xl:col-span-1 xl:justify-self-end">
+                        <p className="text-[11px] font-semibold text-slate-500 xl:hidden">Receipt</p>
+                        {p.status === 'SUCCESS' ? (
+                          <button
+                            onClick={() => downloadReceiptPDF({ ...p, reference: p.reference, amount: p.amount, term: p.term, paidAt: p.created_at })}
+                            className="text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-2.5 py-1.5 rounded-lg transition"
+                          >
+                            Download Receipt
+                          </button>
+                        ) : (
+                          <span className="text-xs text-slate-400">Not available</span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>

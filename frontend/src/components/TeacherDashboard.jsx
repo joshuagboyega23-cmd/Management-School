@@ -29,6 +29,7 @@ export default function TeacherDashboard() {
   const [selectedConversationId, setSelectedConversationId] = useState('');
   const [conversationThread, setConversationThread] = useState([]);
   const [replyText, setReplyText] = useState('');
+  const [messageForm, setMessageForm] = useState({ subject: '', body: '' });
 
   const [gradeClass, setGradeClass] = useState('');
   const [viewClass, setViewClass] = useState('');
@@ -160,6 +161,20 @@ export default function TeacherDashboard() {
       setReplyText('');
       fetchConversationThread(selectedConversationId);
       fetchConversations();
+    } catch (err) {
+      showNotification('error', err.response?.data?.message || 'Failed to send message');
+    }
+  };
+
+  const handleCreateConversation = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await API.post('/conversations', messageForm);
+      if (res.data.success) {
+        showNotification('success', 'Message sent to the school admin.');
+        setMessageForm({ subject: '', body: '' });
+        fetchConversations();
+      }
     } catch (err) {
       showNotification('error', err.response?.data?.message || 'Failed to send message');
     }
@@ -467,6 +482,30 @@ export default function TeacherDashboard() {
         <div className="mt-8 grid grid-cols-1 xl:grid-cols-[0.95fr_1.25fr] gap-6">
           <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
             <h3 className="text-lg font-bold text-slate-800 mb-4">Messages</h3>
+            <form onSubmit={handleCreateConversation} className="space-y-3 mb-5 border-b border-slate-200 pb-5">
+              <h4 className="text-sm font-bold text-slate-700">Message School Admin</h4>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Subject</label>
+                <input
+                  type="text"
+                  value={messageForm.subject}
+                  onChange={(e) => setMessageForm({ ...messageForm, subject: e.target.value })}
+                  className="w-full p-2.5 border border-slate-300 rounded-lg text-sm"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Message</label>
+                <textarea
+                  value={messageForm.body}
+                  onChange={(e) => setMessageForm({ ...messageForm, body: e.target.value })}
+                  rows={4}
+                  className="w-full p-2.5 border border-slate-300 rounded-lg text-sm"
+                  required
+                />
+              </div>
+              <button type="submit" className="w-full bg-blue-600 text-white px-4 py-2.5 rounded-lg text-sm font-semibold">Send Message</button>
+            </form>
             <div className="space-y-3">
               {conversations.length === 0 ? (
                 <p className="text-sm text-slate-500">No conversations directed to you yet.</p>

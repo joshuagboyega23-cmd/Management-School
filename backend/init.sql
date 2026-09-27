@@ -141,8 +141,8 @@ CREATE TABLE IF NOT EXISTS conversations (
     id SERIAL PRIMARY KEY,
     subject VARCHAR(255) NOT NULL,
     created_by INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    recipient_type VARCHAR(20) NOT NULL CHECK (recipient_type IN ('TEACHER', 'BURSAR', 'PRINCIPAL')),
-    recipient_teacher_id INT REFERENCES teachers(id) ON DELETE SET NULL,
+    target_role VARCHAR(20) NOT NULL CHECK (target_role IN ('ADMIN', 'PARENT', 'TEACHER')),
+    target_user_id INT REFERENCES users(id) ON DELETE SET NULL,
     student_id INT REFERENCES students(id) ON DELETE SET NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

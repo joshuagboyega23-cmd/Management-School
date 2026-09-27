@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const axios = require('axios');
+const sendAnnouncementEmails = require('./announcementEmails');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
@@ -158,8 +159,8 @@ const schemas = {
   login: z.object({
     email: emailField,
     password: z.string().min(1, 'Password is required'),
-    portal: z.enum(['student-parent', 'teacher', 'admin'], {
-      errorMap: () => ({ message: "Portal must be 'student-parent', 'teacher', or 'admin'" })
+    portal: z.enum(['student', 'parent', 'teacher', 'admin'], {
+      errorMap: () => ({ message: "Portal must be 'student', 'parent', 'teacher', or 'admin'" })
     })
   }),
 
@@ -861,7 +862,8 @@ app.post('/api/auth/login', validate(schemas.login), async (req, res) => {
 
   // Role-to-Portal Authorization Mapping
   const allowedRolesByPortal = {
-    'student-parent': ['STUDENT', 'PARENT'],
+    'student': ['STUDENT'],
+    'parent': ['PARENT'],
     'teacher': ['TEACHER'],
     'admin': ['ADMIN', 'SUPERADMIN']
   };
@@ -962,6 +964,20 @@ app.get('/api/teachers', verifyToken, requireRole('ADMIN', 'SUPERADMIN'), async 
        ORDER BY t.id DESC`
     );
     res.json({ success: true, data: teachers.rows });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/api/parents', verifyToken, requireRole('ADMIN', 'SUPERADMIN'), async (req, res) => {
+  try {
+    const parents = await req.db.query(
+      `SELECT id, full_name, email
+       FROM users
+       WHERE role = 'PARENT'
+       ORDER BY full_name`
+    );
+    res.json({ success: true, data: parents.rows });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -1472,6 +1488,36 @@ app.post('/api/announcements', verifyToken, requireRole('ADMIN', 'SUPERADMIN'), 
       ]
     );
 
+    const recipientRoles = [];
+    if (Boolean(visible_to_parents)) recipientRoles.push('PARENT');
+    if (Boolean(visible_to_teachers)) recipientRoles.push('TEACHER');
+
+    let recipients = [];
+    if (recipientRoles.length > 0) {
+      try {
+        const recipientResult = await pool.query(
+          `SELECT DISTINCT email
+           FROM users
+           WHERE role = ANY($1::text[])
+             AND email IS NOT NULL
+             AND BTRIM(email) <> ''`,
+          [recipientRoles]
+        );
+        recipients = recipientResult.rows;
+      } catch (emailError) {
+        console.error('Failed to look up announcement email recipients:', emailError.message);
+      }
+    }
+
+    if (recipients.length > 0) {
+      sendAnnouncementEmails(
+        recipients,
+        String(title).trim(),
+        String(message).trim(),
+        event_date || null
+      );
+    }
+
     res.status(201).json({ success: true, data: result.rows[0] });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -1508,60 +1554,70 @@ app.get('/api/announcements', verifyToken, async (req, res) => {
   }
 });
 
-app.post('/api/conversations', verifyToken, requireRole('PARENT'), async (req, res) => {
-  try {
-    const { studentId, recipientType, recipientTeacherId, subject, body } = req.body;
+const canAccessConversation = (conversation, user) => {
+  if (Number(conversation.created_by) === Number(user.id)) return true;
 
-    if (!subject || !body) {
+  if (['ADMIN', 'SUPERADMIN'].includes(user.role)) {
+    return conversation.target_role === 'ADMIN';
+  }
+
+  return conversation.target_role === user.role &&
+    Number(conversation.target_user_id) === Number(user.id);
+};
+
+app.post('/api/conversations', verifyToken, async (req, res) => {
+  try {
+    const { subject, body } = req.body;
+
+    if (req.user.role === 'STUDENT') {
+      return res.status(403).json({ success: false, message: 'Students cannot create conversations.' });
+    }
+
+    if (!['PARENT', 'TEACHER', 'ADMIN', 'SUPERADMIN'].includes(req.user.role)) {
+      return res.status(403).json({ success: false, message: 'Unauthorized action for your role.' });
+    }
+
+    if (!subject || !String(subject).trim() || !body || !String(body).trim()) {
       return res.status(400).json({ success: false, message: 'Subject and message body are required.' });
     }
 
-    if (!['TEACHER', 'BURSAR', 'PRINCIPAL'].includes(recipientType)) {
-      return res.status(400).json({ success: false, message: 'Recipient type must be TEACHER, BURSAR, or PRINCIPAL.' });
-    }
+    let targetRole = 'ADMIN';
+    let targetUserId = null;
 
-    if (recipientType === 'TEACHER') {
-      if (!studentId || !recipientTeacherId) {
-        return res.status(400).json({ success: false, message: 'Student and teacher are required when messaging a teacher.' });
+    if (['ADMIN', 'SUPERADMIN'].includes(req.user.role)) {
+      targetRole = req.body.target_role;
+      targetUserId = Number(req.body.target_user_id);
+
+      if (!['PARENT', 'TEACHER'].includes(targetRole) || !Number.isInteger(targetUserId) || targetUserId <= 0) {
+        return res.status(400).json({ success: false, message: 'A valid parent or teacher recipient is required.' });
       }
 
-      const linkCheck = await (req.db || pool).query(
-        `SELECT 1
-         FROM parent_student_links psl
-         JOIN students s ON s.id = psl.student_id
-         WHERE psl.parent_user_id = $1 AND psl.student_id = $2`,
-        [req.user.id, studentId]
+      const recipient = await req.db.query(
+        'SELECT 1 FROM users WHERE id = $1 AND role = $2',
+        [targetUserId, targetRole]
       );
-
-      if (linkCheck.rows.length === 0) {
-        return res.status(403).json({ success: false, message: 'You can only message teachers for your linked children.' });
-      }
-
-      const teacherMatch = await (req.db || pool).query(
-        `SELECT 1
-         FROM teachers t
-         JOIN classes c ON c.homeroom_teacher_id = t.user_id
-         WHERE t.id = $1 AND c.id = (
-           SELECT class_id FROM students WHERE id = $2
-         )`,
-        [recipientTeacherId, studentId]
-      );
-
-      if (teacherMatch.rows.length === 0) {
-        return res.status(400).json({ success: false, message: 'The selected teacher does not teach this student\'s class.' });
+      if (recipient.rows.length === 0) {
+        return res.status(400).json({ success: false, message: 'The selected recipient does not have the requested role.' });
       }
     }
 
-    const conversationResult = await (req.db || pool).query(
-      `INSERT INTO conversations (subject, created_by, recipient_type, recipient_teacher_id, student_id)
+    const studentId = req.body.student_id == null || req.body.student_id === ''
+      ? null
+      : Number(req.body.student_id);
+    if (studentId !== null && (!Number.isInteger(studentId) || studentId <= 0)) {
+      return res.status(400).json({ success: false, message: 'Student context must be a valid student ID.' });
+    }
+
+    const conversationResult = await req.db.query(
+      `INSERT INTO conversations (subject, created_by, target_role, target_user_id, student_id)
        VALUES ($1, $2, $3, $4, $5)
        RETURNING *`,
-      [String(subject).trim(), req.user.id, recipientType, recipientType === 'TEACHER' ? recipientTeacherId : null, studentId || null]
+      [String(subject).trim(), req.user.id, targetRole, targetUserId, studentId]
     );
 
     const conversation = conversationResult.rows[0];
 
-    await (req.db || pool).query(
+    await req.db.query(
       `INSERT INTO messages (conversation_id, sender_id, body)
        VALUES ($1, $2, $3)`,
       [conversation.id, req.user.id, String(body).trim()]
@@ -1575,28 +1631,33 @@ app.post('/api/conversations', verifyToken, requireRole('PARENT'), async (req, r
 
 app.get('/api/conversations', verifyToken, async (req, res) => {
   try {
+    const role = req.user.role;
+    if (role === 'STUDENT' || !['PARENT', 'TEACHER', 'ADMIN', 'SUPERADMIN'].includes(role)) {
+      return res.status(403).json({ success: false, message: 'Unauthorized action for your role.' });
+    }
+
     let query = `
       SELECT c.*, 
              u.full_name AS creator_name,
+             u.role AS creator_role,
+             target.full_name AS target_name,
              (SELECT COUNT(*) FROM messages m
               WHERE m.conversation_id = c.id AND m.sender_id != $1 AND m.read_at IS NULL) AS unread_count
       FROM conversations c
       JOIN users u ON u.id = c.created_by
+      LEFT JOIN users target ON target.id = c.target_user_id
       WHERE 1=1`;
     const params = [req.user.id];
 
-    if (req.user.role === 'PARENT') {
-      query += ` AND c.created_by = $2`;
+    if (role === 'PARENT') {
+      query += ` AND (c.created_by = $2 OR (c.target_role = 'PARENT' AND c.target_user_id = $2))`;
       params.push(req.user.id);
-    } else if (req.user.role === 'TEACHER') {
-      const teacherRow = await (req.db || pool).query('SELECT id FROM teachers WHERE user_id = $1', [req.user.id]);
-      if (teacherRow.rows.length === 0) {
-        return res.json({ success: true, data: [] });
-      }
-      query += ` AND c.recipient_type = 'TEACHER' AND c.recipient_teacher_id = $2`;
-      params.push(teacherRow.rows[0].id);
-    } else if (req.user.role === 'ADMIN' || req.user.role === 'SUPERADMIN') {
-      query += ` AND c.recipient_type IN ('BURSAR', 'PRINCIPAL')`;
+    } else if (role === 'TEACHER') {
+      query += ` AND (c.created_by = $2 OR (c.target_role = 'TEACHER' AND c.target_user_id = $2))`;
+      params.push(req.user.id);
+    } else {
+      query += ` AND (c.target_role = 'ADMIN' OR c.created_by = $2)`;
+      params.push(req.user.id);
     }
 
     query += ` ORDER BY c.created_at DESC`;
@@ -1610,9 +1671,13 @@ app.get('/api/conversations', verifyToken, async (req, res) => {
 
 app.get('/api/conversations/:id/messages', verifyToken, async (req, res) => {
   try {
+    if (req.user.role === 'STUDENT') {
+      return res.status(403).json({ success: false, message: 'Students cannot access conversations.' });
+    }
+
     const conversationId = Number(req.params.id);
 
-    const conversationResult = await (req.db || pool).query(
+    const conversationResult = await req.db.query(
       `SELECT * FROM conversations WHERE id = $1`,
       [conversationId]
     );
@@ -1622,24 +1687,18 @@ app.get('/api/conversations/:id/messages', verifyToken, async (req, res) => {
     }
 
     const conversation = conversationResult.rows[0];
-    const isParentCreator = conversation.created_by === req.user.id;
-    const isTeacherRecipient = req.user.role === 'TEACHER' && conversation.recipient_type === 'TEACHER' && conversation.recipient_teacher_id &&
-      await (req.db || pool).query('SELECT 1 FROM teachers WHERE id = $1 AND user_id = $2', [conversation.recipient_teacher_id, req.user.id]).then(r => r.rows.length > 0);
-
-    const isAdminRecipient = ['ADMIN', 'SUPERADMIN'].includes(req.user.role) && ['BURSAR', 'PRINCIPAL'].includes(conversation.recipient_type);
-
-    if (!isParentCreator && !(await isTeacherRecipient) && !isAdminRecipient) {
+    if (!canAccessConversation(conversation, req.user)) {
       return res.status(403).json({ success: false, message: 'Access denied to this conversation.' });
     }
 
-    await (req.db || pool).query(
+    await req.db.query(
       `UPDATE messages
        SET read_at = NOW()
        WHERE conversation_id = $1 AND sender_id != $2 AND read_at IS NULL`,
       [conversationId, req.user.id]
     );
 
-    const messages = await (req.db || pool).query(
+    const messages = await req.db.query(
       `SELECT m.*, u.full_name AS sender_name
        FROM messages m
        JOIN users u ON u.id = m.sender_id
@@ -1656,6 +1715,10 @@ app.get('/api/conversations/:id/messages', verifyToken, async (req, res) => {
 
 app.post('/api/conversations/:id/messages', verifyToken, async (req, res) => {
   try {
+    if (req.user.role === 'STUDENT') {
+      return res.status(403).json({ success: false, message: 'Students cannot reply to conversations.' });
+    }
+
     const conversationId = Number(req.params.id);
     const { body } = req.body;
 
@@ -1663,7 +1726,7 @@ app.post('/api/conversations/:id/messages', verifyToken, async (req, res) => {
       return res.status(400).json({ success: false, message: 'Message body is required.' });
     }
 
-    const conversationResult = await (req.db || pool).query(
+    const conversationResult = await req.db.query(
       `SELECT * FROM conversations WHERE id = $1`,
       [conversationId]
     );
@@ -1673,16 +1736,11 @@ app.post('/api/conversations/:id/messages', verifyToken, async (req, res) => {
     }
 
     const conversation = conversationResult.rows[0];
-    const isParentCreator = conversation.created_by === req.user.id;
-    const isTeacherRecipient = req.user.role === 'TEACHER' && conversation.recipient_type === 'TEACHER' && conversation.recipient_teacher_id &&
-      (await (req.db || pool).query('SELECT 1 FROM teachers WHERE id = $1 AND user_id = $2', [conversation.recipient_teacher_id, req.user.id])).rows.length > 0;
-    const isAdminRecipient = ['ADMIN', 'SUPERADMIN'].includes(req.user.role) && ['BURSAR', 'PRINCIPAL'].includes(conversation.recipient_type);
-
-    if (!isParentCreator && !isTeacherRecipient && !isAdminRecipient) {
+    if (!canAccessConversation(conversation, req.user)) {
       return res.status(403).json({ success: false, message: 'You are not allowed to reply in this conversation.' });
     }
 
-    const message = await (req.db || pool).query(
+    const message = await req.db.query(
       `INSERT INTO messages (conversation_id, sender_id, body)
        VALUES ($1, $2, $3)
        RETURNING *`,

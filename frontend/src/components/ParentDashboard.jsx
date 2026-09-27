@@ -15,18 +15,11 @@ export default function ParentDashboard() {
   const [paymentLoading, setPaymentLoading] = useState(false);
   const [verifyingRef, setVerifyingRef] = useState('');
   const [announcements, setAnnouncements] = useState([]);
-  const [teachers, setTeachers] = useState([]);
   const [conversations, setConversations] = useState([]);
   const [selectedConversationId, setSelectedConversationId] = useState('');
   const [conversationThread, setConversationThread] = useState([]);
   const [replyText, setReplyText] = useState('');
-  const [messageForm, setMessageForm] = useState({
-    recipientType: 'TEACHER',
-    studentId: '',
-    recipientTeacherId: '',
-    subject: '',
-    body: ''
-  });
+  const [messageForm, setMessageForm] = useState({ subject: '', body: '' });
 
   const fetchChildren = async () => {
     try {
@@ -42,15 +35,6 @@ export default function ParentDashboard() {
       setError(err.response?.data?.message || 'Failed to fetch linked children.');
     } finally {
       setLoading(false);
-    }
-  };
-
-  const fetchTeachers = async () => {
-    try {
-      const res = await API.get('/teachers');
-      setTeachers(Array.isArray(res.data?.data) ? res.data.data : []);
-    } catch (err) {
-      setTeachers([]);
     }
   };
 
@@ -110,7 +94,6 @@ export default function ParentDashboard() {
   useEffect(() => {
     fetchChildren();
     fetchAnnouncements();
-    fetchTeachers();
     fetchConversations();
   }, []);
 
@@ -134,25 +117,10 @@ export default function ParentDashboard() {
   const handleCreateConversation = async (e) => {
     e.preventDefault();
     try {
-      const payload = {
-        ...messageForm,
-        recipientType: messageForm.recipientType,
-        studentId: messageForm.recipientType === 'TEACHER' ? Number(messageForm.studentId) : null,
-        recipientTeacherId: messageForm.recipientType === 'TEACHER' ? Number(messageForm.recipientTeacherId) : null,
-        subject: messageForm.subject,
-        body: messageForm.body
-      };
-
-      const res = await API.post('/conversations', payload);
+      const res = await API.post('/conversations', messageForm);
       if (res.data.success) {
         showNotification('success', 'Message sent successfully.');
-        setMessageForm({
-          recipientType: 'TEACHER',
-          studentId: '',
-          recipientTeacherId: '',
-          subject: '',
-          body: ''
-        });
+        setMessageForm({ subject: '', body: '' });
         fetchConversations();
       }
     } catch (err) {
@@ -497,49 +465,7 @@ export default function ParentDashboard() {
           <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
             <h3 className="text-lg font-bold text-slate-800 mb-4">Messages</h3>
             <form onSubmit={handleCreateConversation} className="space-y-3 mb-5">
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">Recipient</label>
-                <select
-                  value={messageForm.recipientType}
-                  onChange={(e) => setMessageForm({ ...messageForm, recipientType: e.target.value })}
-                  className="w-full p-2.5 border border-slate-300 rounded-lg text-sm"
-                >
-                  <option value="TEACHER">Class Teacher</option>
-                  <option value="BURSAR">Bursar</option>
-                  <option value="PRINCIPAL">Principal</option>
-                </select>
-              </div>
-
-              {messageForm.recipientType === 'TEACHER' && (
-                <>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">Student</label>
-                    <select
-                      value={messageForm.studentId}
-                      onChange={(e) => setMessageForm({ ...messageForm, studentId: e.target.value })}
-                      className="w-full p-2.5 border border-slate-300 rounded-lg text-sm"
-                    >
-                      <option value="">Select child</option>
-                      {children.map((child) => (
-                        <option key={child.id} value={child.id}>{child.full_name}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">Teacher</label>
-                    <select
-                      value={messageForm.recipientTeacherId}
-                      onChange={(e) => setMessageForm({ ...messageForm, recipientTeacherId: e.target.value })}
-                      className="w-full p-2.5 border border-slate-300 rounded-lg text-sm"
-                    >
-                      <option value="">Select teacher</option>
-                      {teachers.map((teacher) => (
-                        <option key={teacher.teacher_record_id || teacher.id} value={teacher.teacher_record_id || teacher.id}>{teacher.full_name}</option>
-                      ))}
-                    </select>
-                  </div>
-                </>
-              )}
+              <h4 className="text-sm font-bold text-slate-700">Message School Admin</h4>
 
               <div>
                 <label className="block text-xs font-semibold text-slate-600 mb-1">Subject</label>
@@ -584,7 +510,7 @@ export default function ParentDashboard() {
                         <span className="bg-red-500 text-white text-[10px] px-1.5 py-0.5 rounded-full">{conversation.unread_count}</span>
                       )}
                     </div>
-                    <p className="text-xs text-slate-500 mt-1">{conversation.recipient_type} • {conversation.creator_name}</p>
+                    <p className="text-xs text-slate-500 mt-1">School Admin • {conversation.creator_name}</p>
                   </button>
                 ))
               )}

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { GraduationCap, Lock, Mail, ArrowLeft, LogIn, AlertCircle, Heart, BookOpen, ShieldCheck } from 'lucide-react';
 import API from '../opi';
@@ -27,7 +27,7 @@ export default function Login() {
       const res = await API.post('/auth/login', {
         email: formData.email,
         password: formData.password,
-        portal: 'student-parent'
+        portal: activeRole.toLowerCase()
       });
 
       if (res.data.success) {
@@ -84,7 +84,7 @@ export default function Login() {
                   : 'text-slate-400 hover:text-white'
               }`}
             >
-              <GraduationCap className="h-4 w-4" /> I'm a Student
+              <GraduationCap className="h-4 w-4" /> I am a Student
             </button>
             <button
               type="button"
@@ -95,7 +95,7 @@ export default function Login() {
                   : 'text-slate-400 hover:text-white'
               }`}
             >
-              <Heart className="h-4 w-4" /> I'm a Parent
+              <Heart className="h-4 w-4" /> I am a Parent
             </button>
           </div>
 

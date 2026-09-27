@@ -16,6 +16,7 @@ export default function AdminDashboard() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [students, setStudents] = useState([]);
   const [teachers, setTeachers] = useState([]);
+  const [parents, setParents] = useState([]);
   const [loading, setLoading] = useState(false);
   const [loadingStaff, setLoadingStaff] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
@@ -34,6 +35,12 @@ export default function AdminDashboard() {
   const [selectedConversationId, setSelectedConversationId] = useState('');
   const [conversationThread, setConversationThread] = useState([]);
   const [replyText, setReplyText] = useState('');
+  const [newMessageForm, setNewMessageForm] = useState({
+    target_role: 'PARENT',
+    target_user_id: '',
+    subject: '',
+    body: ''
+  });
 
   // Fetch Students
   const fetchStudents = async () => {
@@ -62,6 +69,15 @@ export default function AdminDashboard() {
       setTeachers([]);
     } finally {
       setLoadingStaff(false);
+    }
+  };
+
+  const fetchParents = async () => {
+    try {
+      const res = await API.get('/parents');
+      setParents(Array.isArray(res.data?.data) ? res.data.data : []);
+    } catch (err) {
+      setParents([]);
     }
   };
 
@@ -119,6 +135,7 @@ export default function AdminDashboard() {
   useEffect(() => {
     fetchStudents();
     fetchTeachers();
+    fetchParents();
     fetchPendingPayments();
     fetchConversations();
   }, []);
@@ -252,6 +269,31 @@ export default function AdminDashboard() {
       setReplyText('');
       fetchConversationThread(selectedConversationId);
       fetchConversations();
+    } catch (err) {
+      showNotification('error', err.response?.data?.message || 'Failed to send message');
+    }
+  };
+
+  const handleCreateConversation = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await API.post('/conversations', {
+        target_role: newMessageForm.target_role,
+        target_user_id: Number(newMessageForm.target_user_id),
+        subject: newMessageForm.subject,
+        body: newMessageForm.body
+      });
+      if (res.data.success) {
+        showNotification('success', 'Message sent successfully.');
+        setNewMessageForm({
+          target_role: newMessageForm.target_role,
+          target_user_id: '',
+          subject: '',
+          body: ''
+        });
+        setSelectedConversationId(String(res.data.data.id));
+        fetchConversations();
+      }
     } catch (err) {
       showNotification('error', err.response?.data?.message || 'Failed to send message');
     }
@@ -504,9 +546,58 @@ export default function AdminDashboard() {
           <div className="grid grid-cols-1 xl:grid-cols-[0.95fr_1.25fr] gap-6">
             <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
               <h3 className="text-lg font-bold text-slate-800 mb-4">School Messages</h3>
+              <form onSubmit={handleCreateConversation} className="space-y-3 mb-5 border-b border-slate-200 pb-5">
+                <h4 className="text-sm font-bold text-slate-700">New Message</h4>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Recipient Type</label>
+                  <select
+                    value={newMessageForm.target_role}
+                    onChange={(e) => setNewMessageForm({ ...newMessageForm, target_role: e.target.value, target_user_id: '' })}
+                    className="w-full p-2.5 border border-slate-300 rounded-lg text-sm"
+                  >
+                    <option value="PARENT">Parent</option>
+                    <option value="TEACHER">Teacher</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Recipient</label>
+                  <select
+                    value={newMessageForm.target_user_id}
+                    onChange={(e) => setNewMessageForm({ ...newMessageForm, target_user_id: e.target.value })}
+                    className="w-full p-2.5 border border-slate-300 rounded-lg text-sm"
+                    required
+                  >
+                    <option value="">Select {newMessageForm.target_role.toLowerCase()}</option>
+                    {newMessageForm.target_role === 'PARENT'
+                      ? parents.map((parent) => <option key={parent.id} value={parent.id}>{parent.full_name} ({parent.email})</option>)
+                      : teachers.filter((teacher) => teacher.is_registered && teacher.id).map((teacher) => <option key={teacher.id} value={teacher.id}>{teacher.full_name} ({teacher.email})</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Subject</label>
+                  <input
+                    type="text"
+                    value={newMessageForm.subject}
+                    onChange={(e) => setNewMessageForm({ ...newMessageForm, subject: e.target.value })}
+                    className="w-full p-2.5 border border-slate-300 rounded-lg text-sm"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Message</label>
+                  <textarea
+                    value={newMessageForm.body}
+                    onChange={(e) => setNewMessageForm({ ...newMessageForm, body: e.target.value })}
+                    rows={4}
+                    className="w-full p-2.5 border border-slate-300 rounded-lg text-sm"
+                    required
+                  />
+                </div>
+                <button type="submit" className="w-full bg-blue-600 text-white px-4 py-2.5 rounded-lg text-sm font-semibold">Send Message</button>
+              </form>
               <div className="space-y-3">
                 {conversations.length === 0 ? (
-                  <p className="text-sm text-slate-500">No Bursar or Principal conversations available.</p>
+                  <p className="text-sm text-slate-500">No conversations available.</p>
                 ) : (
                   conversations.map((conversation) => (
                     <button
@@ -521,7 +612,11 @@ export default function AdminDashboard() {
                           <span className="bg-red-500 text-white text-[10px] px-1.5 py-0.5 rounded-full">{conversation.unread_count}</span>
                         )}
                       </div>
-                      <p className="text-xs text-slate-500 mt-1">{conversation.recipient_type} • from {conversation.creator_name}</p>
+                      <p className="text-xs text-slate-500 mt-1">
+                        {conversation.target_role === 'ADMIN'
+                          ? `From ${conversation.creator_name} (${conversation.creator_role})`
+                          : `To ${conversation.target_role}: ${conversation.target_name}`}
+                      </p>
                     </button>
                   ))
                 )}
