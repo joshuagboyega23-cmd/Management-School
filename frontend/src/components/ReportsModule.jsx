@@ -2,16 +2,9 @@ import React, { useState } from 'react';
 import { Download } from 'lucide-react';
 import { downloadReportCardPDF } from '../utils/pdfUtils';
 
-const CLASS_OPTIONS = ['JSS1', 'JSS2', 'JSS3', 'SS1', 'SS2', 'SS3'];
-
 const filterStudentsByClass = (list, selectedClass) => {
   if (!selectedClass) return list;
-  const target = selectedClass.toUpperCase().trim();
-  return list.filter((s) => {
-    const cName = (s.class_name || '').toUpperCase().trim();
-    const cLevel = (s.class_level || '').toUpperCase().trim();
-    return cName.startsWith(target) || cLevel === target || String(s.class_id) === target;
-  });
+  return list.filter((student) => String(student.class_id) === String(selectedClass));
 };
 
 export default function ReportsModule({ students, onSubmitGrade, onFetchReportCard, reportData }) {
@@ -29,6 +22,11 @@ export default function ReportsModule({ students, onSubmitGrade, onFetchReportCa
 
   const studentList = Array.isArray(students) ? students : [];
   const reportList = Array.isArray(reportData) ? reportData : [];
+  const classOptions = [...new Map(
+    studentList
+      .filter((student) => student.class_id && student.class_name)
+      .map((student) => [String(student.class_id), { id: student.class_id, name: student.class_name }])
+  ).values()];
 
   const filteredGradeStudents = filterStudentsByClass(studentList, gradeClass);
   const filteredViewStudents = filterStudentsByClass(studentList, viewClass);
@@ -69,8 +67,8 @@ export default function ReportsModule({ students, onSubmitGrade, onFetchReportCa
                 className="w-full p-2.5 border border-gray-300 rounded-lg text-sm bg-white"
               >
                 <option value="">-- All Classes (JSS1 - SS3) --</option>
-                {CLASS_OPTIONS.map((cls) => (
-                  <option key={cls} value={cls}>{cls}</option>
+                {classOptions.map((classItem) => (
+                  <option key={classItem.id} value={classItem.id}>{classItem.name}</option>
                 ))}
               </select>
             </div>
@@ -84,8 +82,10 @@ export default function ReportsModule({ students, onSubmitGrade, onFetchReportCa
                 className="w-full p-2.5 border border-gray-300 rounded-lg text-sm bg-white"
               >
                 <option value="">-- Choose Student --</option>
-                {filteredGradeStudents.map((s) => (
-                  <option key={s.id} value={s.id}>{s.name} ({s.class_name || 'No Class'})</option>
+                {filteredGradeStudents.length === 0 && gradeClass ? (
+                  <option value="" disabled>No students in this class</option>
+                ) : filteredGradeStudents.map((student) => (
+                  <option key={student.id} value={student.id}>{student.name} ({student.class_name || 'No Class'})</option>
                 ))}
               </select>
             </div>
@@ -177,8 +177,8 @@ export default function ReportsModule({ students, onSubmitGrade, onFetchReportCa
                 className="w-full p-2.5 border border-gray-300 rounded-lg text-sm bg-white"
               >
                 <option value="">-- All Classes (JSS1 - SS3) --</option>
-                {CLASS_OPTIONS.map((cls) => (
-                  <option key={cls} value={cls}>{cls}</option>
+                {classOptions.map((classItem) => (
+                  <option key={classItem.id} value={classItem.id}>{classItem.name}</option>
                 ))}
               </select>
             </div>
@@ -191,8 +191,10 @@ export default function ReportsModule({ students, onSubmitGrade, onFetchReportCa
                 className="w-full p-2.5 border border-gray-300 rounded-lg text-sm bg-white"
               >
                 <option value="">-- Choose Student --</option>
-                {filteredViewStudents.map((s) => (
-                  <option key={s.id} value={s.id}>{s.name} ({s.class_name || 'No Class'})</option>
+                {filteredViewStudents.length === 0 && viewClass ? (
+                  <option value="" disabled>No students in this class</option>
+                ) : filteredViewStudents.map((student) => (
+                  <option key={student.id} value={student.id}>{student.name} ({student.class_name || 'No Class'})</option>
                 ))}
               </select>
             </div>

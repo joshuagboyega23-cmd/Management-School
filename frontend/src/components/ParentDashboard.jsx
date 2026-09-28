@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { GraduationCap, LogOut, Users, FileText, CreditCard, Award, ChevronDown, ChevronUp, AlertCircle, Clock, RefreshCw } from 'lucide-react';
-import API from '../opi';
+import API, { SERVER_WAKING_MESSAGE } from '../opi';
 import { formatDateTime, downloadReceiptPDF } from '../utils/pdfUtils';
 
 export default function ParentDashboard() {
@@ -165,9 +165,13 @@ export default function ParentDashboard() {
 
       if (res.data.success && res.data.paymentUrl) {
         window.location.href = res.data.paymentUrl;
+      } else if (res.data.success) {
+        showNotification('error', 'Paystack did not return a checkout link. Please try again.');
+      } else {
+        showNotification('error', res.data.message || res.data.error || 'Payment initialization failed');
       }
     } catch (err) {
-      showNotification('error', err.response?.data?.error || 'Payment initialization failed');
+      showNotification('error', err.response?.data?.message || err.response?.data?.error || (!err.response ? SERVER_WAKING_MESSAGE : 'Payment initialization failed'));
     } finally {
       setPaymentLoading(false);
     }

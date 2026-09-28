@@ -5,16 +5,9 @@ import API from '../opi';
 import { downloadGradeSheetPDF } from '../utils/pdfUtils';
 import MaterialsManager from './MaterialsManager';
 
-const CLASS_OPTIONS = ['JSS1', 'JSS2', 'JSS3', 'SS1', 'SS2', 'SS3'];
-
 const filterStudentsByClass = (list, selectedClass) => {
   if (!selectedClass) return list;
-  const target = selectedClass.toUpperCase().trim();
-  return list.filter((s) => {
-    const cName = (s.class_name || '').toUpperCase().trim();
-    const cLevel = (s.class_level || '').toUpperCase().trim();
-    return cName.startsWith(target) || cLevel === target || String(s.class_id) === target;
-  });
+  return list.filter((student) => String(student.class_id) === String(selectedClass));
 };
 
 export default function TeacherDashboard() {
@@ -150,6 +143,11 @@ export default function TeacherDashboard() {
 
   const filteredGradeStudents = filterStudentsByClass(students, gradeClass);
   const filteredViewStudents = filterStudentsByClass(students, viewClass);
+  const classOptions = [...new Map(
+    students
+      .filter((student) => student.class_id && student.class_name)
+      .map((student) => [String(student.class_id), { id: student.class_id, name: student.class_name }])
+  ).values()];
   const upcomingEvents = [...announcements]
     .filter((item) => item.event_date)
     .sort((a, b) => new Date(a.event_date) - new Date(b.event_date));
@@ -300,8 +298,8 @@ export default function TeacherDashboard() {
                     className="w-full p-2.5 border border-slate-300 rounded-lg text-sm bg-white"
                   >
                     <option value="">-- All Classes (JSS1 - SS3) --</option>
-                    {CLASS_OPTIONS.map((cls) => (
-                      <option key={cls} value={cls}>{cls}</option>
+                    {classOptions.map((classItem) => (
+                      <option key={classItem.id} value={classItem.id}>{classItem.name}</option>
                     ))}
                   </select>
                 </div>
@@ -315,9 +313,11 @@ export default function TeacherDashboard() {
                     className="w-full p-2.5 border border-slate-300 rounded-lg text-sm bg-white"
                   >
                     <option value="">-- Choose Student --</option>
-                    {filteredGradeStudents.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.name} ({s.admission_no || s.admission_number}) - {s.class_name || 'No Class'}
+                    {filteredGradeStudents.length === 0 && gradeClass ? (
+                      <option value="" disabled>No students in this class</option>
+                    ) : filteredGradeStudents.map((student) => (
+                      <option key={student.id} value={student.id}>
+                        {student.name} ({student.admission_no || student.admission_number}) - {student.class_name || 'No Class'}
                       </option>
                     ))}
                   </select>
@@ -425,8 +425,8 @@ export default function TeacherDashboard() {
                   className="w-full p-2.5 border border-slate-300 rounded-lg text-sm bg-white"
                 >
                   <option value="">-- All Classes (JSS1 - SS3) --</option>
-                  {CLASS_OPTIONS.map((cls) => (
-                    <option key={cls} value={cls}>{cls}</option>
+                  {classOptions.map((classItem) => (
+                    <option key={classItem.id} value={classItem.id}>{classItem.name}</option>
                   ))}
                 </select>
               </div>
@@ -439,9 +439,11 @@ export default function TeacherDashboard() {
                   className="w-full p-2.5 border border-slate-300 rounded-lg text-sm bg-white"
                 >
                   <option value="">-- Choose Student to View --</option>
-                  {filteredViewStudents.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name} ({s.admission_no || s.admission_number}) - {s.class_name || 'No Class'}
+                  {filteredViewStudents.length === 0 && viewClass ? (
+                    <option value="" disabled>No students in this class</option>
+                  ) : filteredViewStudents.map((student) => (
+                    <option key={student.id} value={student.id}>
+                      {student.name} ({student.admission_no || student.admission_number}) - {student.class_name || 'No Class'}
                     </option>
                   ))}
                 </select>

@@ -11,7 +11,7 @@ const sendResendEmail = async ({ email, subject, text }) => {
     await axios.post(
       'https://api.resend.com/emails',
       {
-        from: 'onboarding@resend.dev',
+        from: process.env.EMAIL_FROM || 'onboarding@resend.dev',
         to: [email],
         subject,
         text

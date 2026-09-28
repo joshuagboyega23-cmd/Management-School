@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { Users, UserCheck, FileText, CreditCard, CheckCircle, GraduationCap, ArrowLeft, LogOut, Menu, X, Clock, RefreshCw, Bell, MessageSquareText, KeyRound, Share2 } from 'lucide-react';
+import { Users, UserCheck, FileText, CreditCard, CheckCircle, GraduationCap, ArrowLeft, LogOut, Menu, X, Clock, RefreshCw, Bell, MessageSquareText, KeyRound, Share2, Trash2 } from 'lucide-react';
 
 import StudentsModule from './StudentsModule';
 import StaffModule from './StaffModule';
@@ -18,6 +18,9 @@ export default function AdminDashboard() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [students, setStudents] = useState([]);
   const [teachers, setTeachers] = useState([]);
+  const [parents, setParents] = useState([]);
+  const [teacherSearch, setTeacherSearch] = useState('');
+  const [parentSearch, setParentSearch] = useState('');
   const [loading, setLoading] = useState(false);
   const [loadingStaff, setLoadingStaff] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
@@ -32,6 +35,7 @@ export default function AdminDashboard() {
     visible_to_teachers: true,
     event_date: ''
   });
+  const [announcements, setAnnouncements] = useState([]);
   const [conversations, setConversations] = useState([]);
   const [selectedConversationId, setSelectedConversationId] = useState('');
   const [conversationThread, setConversationThread] = useState([]);
@@ -44,6 +48,7 @@ export default function AdminDashboard() {
   const [issuedPassword, setIssuedPassword] = useState('');
   const [newMessageForm, setNewMessageForm] = useState({
     target_role: 'PARENT',
+    audience: { mode: 'ALL', classIds: [], userIds: [] },
     subject: '',
     body: ''
   });
@@ -78,6 +83,15 @@ export default function AdminDashboard() {
     }
   };
 
+  const fetchParents = async () => {
+    try {
+      const res = await API.get('/parents');
+      setParents(Array.isArray(res.data?.data) ? res.data.data : []);
+    } catch (err) {
+      setParents([]);
+    }
+  };
+
   const fetchPendingPayments = async () => {
     try {
       const res = await API.get('/payments/history');
@@ -86,6 +100,15 @@ export default function AdminDashboard() {
     } catch (err) {
       console.error('Error fetching pending payments:', err);
       setPendingPayments([]);
+    }
+  };
+
+  const fetchAnnouncements = async () => {
+    try {
+      const res = await API.get('/announcements');
+      setAnnouncements(Array.isArray(res.data?.data) ? res.data.data : []);
+    } catch (err) {
+      setAnnouncements([]);
     }
   };
 
@@ -132,7 +155,9 @@ export default function AdminDashboard() {
   useEffect(() => {
     fetchStudents();
     fetchTeachers();
+    fetchParents();
     fetchPendingPayments();
+    fetchAnnouncements();
     fetchConversations();
   }, []);
 
@@ -275,8 +300,22 @@ export default function AdminDashboard() {
         visible_to_teachers: true,
         event_date: ''
       });
+      fetchAnnouncements();
     } catch (err) {
       showNotification('error', err.response?.data?.message || err.response?.data?.error || 'Failed to post announcement');
+    }
+  };
+
+  const handleDeleteAnnouncement = async (announcement) => {
+    const confirmText = 'This removes it from all student, parent and teacher dashboards. Events are stored on the same announcement record, so deleting an event also removes its announcement. Continue?';
+    if (!window.confirm(confirmText)) return;
+
+    try {
+      await API.delete(`/announcements/${announcement.id}`);
+      showNotification('success', 'Announcement and event deleted.');
+      fetchAnnouncements();
+    } catch (err) {
+      showNotification('error', err.response?.data?.message || 'Could not delete announcement.');
     }
   };
 
@@ -298,14 +337,17 @@ export default function AdminDashboard() {
     try {
       const res = await API.post('/conversations', {
         target_role: newMessageForm.target_role,
+        audience: newMessageForm.audience,
         subject: newMessageForm.subject,
         body: newMessageForm.body
       });
       if (res.data.success) {
         const count = Number(res.data.threadsCreated || 0);
-        showNotification('success', `Message sent in ${count} private thread${count === 1 ? '' : 's'}.`);
+        const recipientType = newMessageForm.target_role === 'PARENT' ? 'parents' : 'teachers';
+        showNotification('success', `Sent to ${count} ${recipientType}.`);
         setNewMessageForm({
           target_role: newMessageForm.target_role,
+          audience: { mode: 'ALL', classIds: [], userIds: [] },
           subject: '',
           body: ''
         });
@@ -346,6 +388,21 @@ export default function AdminDashboard() {
     setConfirmResetPassword(generatedPassword);
     setIssuedPassword('');
   };
+
+  const registeredTeachers = teachers.filter((teacher) => teacher.is_registered && teacher.id);
+  const classOptions = [...new Map(
+    students
+      .filter((student) => student.class_id && student.class_name)
+      .map((student) => [String(student.class_id), { id: student.class_id, name: student.class_name }])
+  ).values()];
+  const matchingTeachers = registeredTeachers.filter((teacher) =>
+    `${teacher.full_name} ${teacher.email}`.toLowerCase().includes(teacherSearch.trim().toLowerCase())
+  );
+  const matchingParents = parents.filter((parent) =>
+    `${parent.full_name} ${parent.email} ${(parent.children || []).map((child) => `${child.name} ${child.admission_number} ${child.class || ''}`).join(' ')}`
+      .toLowerCase()
+      .includes(parentSearch.trim().toLowerCase())
+  );
 
   return (
     <div className="flex h-screen bg-gray-100 font-sans overflow-hidden">
@@ -592,6 +649,62 @@ export default function AdminDashboard() {
 
               <button type="submit" className="bg-blue-600 text-white px-4 py-2.5 rounded-lg text-sm font-semibold">Publish Announcement</button>
             </form>
+            <div className="mt-8 grid grid-cols-1 gap-6 xl:grid-cols-2">
+              <section className="border-t border-slate-200 pt-5">
+                <h3 className="mb-3 text-base font-bold text-slate-800">Announcements</h3>
+                {announcements.length === 0 ? (
+                  <p className="text-sm text-slate-500">No announcements yet.</p>
+                ) : (
+                  <div className="divide-y divide-slate-100">
+                    {announcements.map((announcement) => (
+                      <div key={announcement.id} className="flex items-start justify-between gap-3 py-3">
+                        <div className="min-w-0">
+                          <p className="break-words text-sm font-semibold text-slate-800">{announcement.title}</p>
+                          <p className="mt-1 line-clamp-2 text-xs text-slate-500">{announcement.message}</p>
+                          <p className="mt-1 text-[11px] text-slate-400">{formatDateTime(announcement.created_at)}</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteAnnouncement(announcement)}
+                          aria-label={`Delete announcement ${announcement.title}`}
+                          title="Delete announcement"
+                          className="shrink-0 rounded-lg border border-red-200 p-2 text-red-700 hover:bg-red-50"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+
+              <section className="border-t border-slate-200 pt-5">
+                <h3 className="mb-3 text-base font-bold text-slate-800">Upcoming Events</h3>
+                {announcements.filter((announcement) => announcement.event_date).length === 0 ? (
+                  <p className="text-sm text-slate-500">No upcoming events.</p>
+                ) : (
+                  <div className="divide-y divide-slate-100">
+                    {announcements.filter((announcement) => announcement.event_date).map((event) => (
+                      <div key={event.id} className="flex items-start justify-between gap-3 py-3">
+                        <div className="min-w-0">
+                          <p className="break-words text-sm font-semibold text-slate-800">{event.title}</p>
+                          <p className="mt-1 text-xs text-slate-500">{new Date(event.event_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteAnnouncement(event)}
+                          aria-label={`Delete event ${event.title}`}
+                          title="Delete event and its announcement"
+                          className="shrink-0 rounded-lg border border-red-200 p-2 text-red-700 hover:bg-red-50"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+            </div>
           </div>
         )}
 
@@ -605,35 +718,61 @@ export default function AdminDashboard() {
         {activeTab === 'password-reset' && (
           <div className="max-w-2xl rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
             <h3 className="mb-4 text-lg font-bold text-slate-800">Reset User Password</h3>
-            <label className="mb-1 block text-xs font-semibold text-slate-600">Search by name, email, or admission number</label>
-            <input
-              type="search"
-              value={userSearch}
-              onChange={(e) => setUserSearch(e.target.value)}
-              className="mb-3 w-full rounded-lg border border-slate-300 p-2.5 text-sm"
-              placeholder="Start typing to find a user"
-            />
-            {userSearchResults.length > 0 && (
-              <div className="mb-5 max-h-48 overflow-y-auto divide-y divide-slate-100 rounded-lg border border-slate-200">
-                {userSearchResults.map((user) => (
-                  <button
-                    key={user.id}
-                    type="button"
-                    onClick={() => {
-                      setSelectedResetUser(user);
-                      setIssuedPassword('');
-                    }}
-                    className={`block w-full px-3 py-2 text-left text-sm hover:bg-slate-50 ${selectedResetUser?.id === user.id ? 'bg-blue-50' : ''}`}
-                  >
-                    <span className="font-semibold text-slate-800">{user.full_name}</span>
-                    <span className="ml-2 text-slate-500">{user.email} · {user.role}{user.admission_number ? ` · ${user.admission_number}` : ''}</span>
-                  </button>
-                ))}
-              </div>
+            {!selectedResetUser && (
+              <>
+                <label className="mb-1 block text-xs font-semibold text-slate-600">Search by name, email, or admission number</label>
+                <input
+                  type="search"
+                  value={userSearch}
+                  onChange={(e) => setUserSearch(e.target.value)}
+                  className="mb-3 w-full rounded-lg border border-slate-300 p-2.5 text-sm"
+                  placeholder="Start typing to find a user"
+                />
+                {userSearchResults.length > 0 && (
+                  <div className="mb-5 max-h-48 overflow-y-auto divide-y divide-slate-100 rounded-lg border border-slate-200">
+                    {userSearchResults.map((user) => (
+                      <button
+                        key={user.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedResetUser(user);
+                          setIssuedPassword('');
+                          setResetPassword('');
+                          setConfirmResetPassword('');
+                        }}
+                        className="block w-full px-3 py-2 text-left text-sm hover:bg-slate-50"
+                      >
+                        <span className="font-semibold text-slate-800">{user.full_name}</span>
+                        <span className="ml-2 text-slate-500">{user.email} · {user.role}{user.admission_number ? ` · ${user.admission_number}` : ''}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </>
             )}
             {selectedResetUser && (
-              <form onSubmit={handleAdminPasswordReset} className="space-y-3 border-t border-slate-200 pt-4">
-                <p className="text-sm text-slate-700">Selected: <strong>{selectedResetUser.full_name}</strong> ({selectedResetUser.role})</p>
+              <div className="border-t border-slate-200 pt-4">
+                <div className="flex flex-wrap items-start justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
+                  <div className="space-y-1 text-sm text-slate-700">
+                    <p className="font-semibold text-slate-900">{selectedResetUser.full_name}</p>
+                    <p>{selectedResetUser.email}</p>
+                    <p>{selectedResetUser.role}</p>
+                    {selectedResetUser.admission_number && <p>Admission number: {selectedResetUser.admission_number}</p>}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedResetUser(null);
+                      setResetPassword('');
+                      setConfirmResetPassword('');
+                      setIssuedPassword('');
+                    }}
+                    className="text-xs font-semibold text-blue-700 underline underline-offset-2"
+                  >
+                    Change selection
+                  </button>
+                </div>
+                <form onSubmit={handleAdminPasswordReset} className="mt-4 space-y-3">
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-slate-600">New password</label>
                   <PasswordInput
@@ -658,7 +797,8 @@ export default function AdminDashboard() {
                   <button type="button" onClick={generateAdminPassword} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">Generate password</button>
                   <button type="submit" className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700">Reset password</button>
                 </div>
-              </form>
+                </form>
+              </div>
             )}
             {issuedPassword && (
               <div className="mt-5 rounded-lg border border-emerald-200 bg-emerald-50 p-4" role="status">
@@ -684,14 +824,121 @@ export default function AdminDashboard() {
                   <label className="block text-xs font-semibold text-slate-600 mb-1">Recipient Type</label>
                   <select
                     value={newMessageForm.target_role}
-                    onChange={(e) => setNewMessageForm({ ...newMessageForm, target_role: e.target.value })}
+                    onChange={(e) => {
+                      setNewMessageForm({
+                        ...newMessageForm,
+                        target_role: e.target.value,
+                        audience: { mode: 'ALL', classIds: [], userIds: [] }
+                      });
+                      setTeacherSearch('');
+                      setParentSearch('');
+                    }}
                     className="w-full p-2.5 border border-slate-300 rounded-lg text-sm"
                   >
                     <option value="PARENT">Parent</option>
                     <option value="TEACHER">Teacher</option>
                   </select>
                 </div>
-                <p className="text-xs text-slate-500">Sends a private message to every registered {newMessageForm.target_role.toLowerCase()}.</p>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Send to</label>
+                  <select
+                    value={newMessageForm.audience.mode}
+                    onChange={(e) => setNewMessageForm({
+                      ...newMessageForm,
+                      audience: { mode: e.target.value, classIds: [], userIds: [] }
+                    })}
+                    className="w-full p-2.5 border border-slate-300 rounded-lg text-sm"
+                  >
+                    <option value="ALL">All {newMessageForm.target_role === 'PARENT' ? 'parents' : 'teachers'}</option>
+                    {newMessageForm.target_role === 'PARENT' && <option value="CLASSES">Parents of selected classes</option>}
+                    <option value="SELECTED">Selected {newMessageForm.target_role === 'PARENT' ? 'parents' : 'teachers'}</option>
+                  </select>
+                </div>
+
+                {newMessageForm.target_role === 'TEACHER' && newMessageForm.audience.mode === 'SELECTED' && (
+                  <div className="rounded-lg border border-slate-200 p-3">
+                    <label className="mb-2 block text-xs font-semibold text-slate-600">Search registered teachers</label>
+                    <input type="search" value={teacherSearch} onChange={(e) => setTeacherSearch(e.target.value)} placeholder="Name or email" className="mb-2 w-full rounded-lg border border-slate-300 p-2 text-sm" />
+                    <div className="max-h-40 space-y-2 overflow-y-auto">
+                      {matchingTeachers.map((teacher) => (
+                        <label key={teacher.id} className="flex items-start gap-2 text-sm text-slate-700">
+                          <input
+                            type="checkbox"
+                            checked={newMessageForm.audience.userIds.includes(teacher.id)}
+                            onChange={(e) => setNewMessageForm({
+                              ...newMessageForm,
+                              audience: {
+                                ...newMessageForm.audience,
+                                userIds: e.target.checked
+                                  ? [...newMessageForm.audience.userIds, teacher.id]
+                                  : newMessageForm.audience.userIds.filter((id) => id !== teacher.id)
+                              }
+                            })}
+                          />
+                          <span>{teacher.full_name} <span className="text-xs text-slate-500">{teacher.email}</span></span>
+                        </label>
+                      ))}
+                      {matchingTeachers.length === 0 && <p className="text-xs text-slate-500">No registered teachers match.</p>}
+                    </div>
+                  </div>
+                )}
+
+                {newMessageForm.target_role === 'PARENT' && newMessageForm.audience.mode === 'CLASSES' && (
+                  <div className="rounded-lg border border-slate-200 p-3">
+                    <p className="mb-2 text-xs font-semibold text-slate-600">Classes</p>
+                    <div className="space-y-2">
+                      {classOptions.map((classItem) => (
+                        <label key={classItem.id} className="flex items-center gap-2 text-sm text-slate-700">
+                          <input
+                            type="checkbox"
+                            checked={newMessageForm.audience.classIds.includes(classItem.id)}
+                            onChange={(e) => setNewMessageForm({
+                              ...newMessageForm,
+                              audience: {
+                                ...newMessageForm.audience,
+                                classIds: e.target.checked
+                                  ? [...newMessageForm.audience.classIds, classItem.id]
+                                  : newMessageForm.audience.classIds.filter((id) => id !== classItem.id)
+                              }
+                            })}
+                          />
+                          {classItem.name}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {newMessageForm.target_role === 'PARENT' && newMessageForm.audience.mode === 'SELECTED' && (
+                  <div className="rounded-lg border border-slate-200 p-3">
+                    <label className="mb-2 block text-xs font-semibold text-slate-600">Search parents and their children</label>
+                    <input type="search" value={parentSearch} onChange={(e) => setParentSearch(e.target.value)} placeholder="Parent, email, child, admission number, or class" className="mb-2 w-full rounded-lg border border-slate-300 p-2 text-sm" />
+                    <div className="max-h-48 space-y-3 overflow-y-auto">
+                      {matchingParents.map((parent) => (
+                        <label key={parent.id} className="flex items-start gap-2 text-sm text-slate-700">
+                          <input
+                            type="checkbox"
+                            checked={newMessageForm.audience.userIds.includes(parent.id)}
+                            onChange={(e) => setNewMessageForm({
+                              ...newMessageForm,
+                              audience: {
+                                ...newMessageForm.audience,
+                                userIds: e.target.checked
+                                  ? [...newMessageForm.audience.userIds, parent.id]
+                                  : newMessageForm.audience.userIds.filter((id) => id !== parent.id)
+                              }
+                            })}
+                          />
+                          <span>
+                            <span className="block font-semibold">{parent.full_name} <span className="font-normal text-xs text-slate-500">{parent.email}</span></span>
+                            {(parent.children || []).map((child) => <span key={`${parent.id}-${child.admission_number}`} className="block text-xs text-slate-500">{child.name} · {child.admission_number} · {child.class || 'No class'}</span>)}
+                          </span>
+                        </label>
+                      ))}
+                      {matchingParents.length === 0 && <p className="text-xs text-slate-500">No parents match.</p>}
+                    </div>
+                  </div>
+                )}
                 <div>
                   <label className="block text-xs font-semibold text-slate-600 mb-1">Subject</label>
                   <input

@@ -319,6 +319,47 @@ export default function StudentDashboard() {
           </div>
         )}
 
+        <section className="mb-8 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm" aria-labelledby="learning-materials-heading">
+          <div className="mb-4 flex items-center gap-3">
+            <div className="rounded-lg bg-emerald-50 p-2 text-emerald-700">
+              <FileText className="h-5 w-5" />
+            </div>
+            <h2 id="learning-materials-heading" className="text-lg font-bold text-slate-800">Learning Materials</h2>
+          </div>
+          {materials.length === 0 ? (
+            <p className="py-3 text-sm text-slate-500">No learning materials have been shared yet.</p>
+          ) : (
+            <div className="divide-y divide-slate-100">
+              {materials.map((material) => (
+                <article key={material.id} className="flex flex-col gap-3 py-4 first:pt-0 last:pb-0 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="break-words font-semibold text-slate-800">{material.title}</h3>
+                      <span className="rounded bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase text-slate-600">{material.kind}</span>
+                    </div>
+                    {material.description && <p className="mt-1 whitespace-pre-wrap text-sm text-slate-600">{material.description}</p>}
+                    <p className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
+                      <span>{material.class_name || 'All students'}</span>
+                      <span>{formatDateTime(material.created_at)}</span>
+                      <span>Posted by {material.uploader_name}</span>
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 flex-wrap gap-2">
+                    {material.kind === 'FILE' ? (
+                      <>
+                        <a href={material.url} target="_blank" rel="noreferrer" className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-100">Open</a>
+                        <a href={material.url} download={material.file_name || material.title} className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700">Download</a>
+                      </>
+                    ) : (
+                      <a href={material.url} target="_blank" rel="noreferrer" className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-100">Open link</a>
+                    )}
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+
         {/* Tab 2: Payments */}
         {activeTab === 'payments' && (
           <div className="space-y-6">
@@ -337,46 +378,6 @@ export default function StudentDashboard() {
                       <div>
                         <p className="text-xs font-mono font-bold text-slate-800">{p.reference}</p>
 
-                    <section className="mb-8 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm" aria-labelledby="learning-materials-heading">
-                      <div className="mb-4 flex items-center gap-3">
-                        <div className="rounded-lg bg-emerald-50 p-2 text-emerald-700">
-                          <FileText className="h-5 w-5" />
-                        </div>
-                        <h2 id="learning-materials-heading" className="text-lg font-bold text-slate-800">Learning Materials</h2>
-                      </div>
-                      {materials.length === 0 ? (
-                        <p className="py-3 text-sm text-slate-500">No learning materials have been shared yet.</p>
-                      ) : (
-                        <div className="divide-y divide-slate-100">
-                          {materials.map((material) => (
-                            <article key={material.id} className="flex flex-col gap-3 py-4 first:pt-0 last:pb-0 sm:flex-row sm:items-center sm:justify-between">
-                              <div className="min-w-0">
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <h3 className="break-words font-semibold text-slate-800">{material.title}</h3>
-                                  <span className="rounded bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase text-slate-600">{material.kind}</span>
-                                </div>
-                                {material.description && <p className="mt-1 whitespace-pre-wrap text-sm text-slate-600">{material.description}</p>}
-                                <p className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
-                                  <span>{material.class_name || 'All students'}</span>
-                                  <span>{formatDateTime(material.created_at)}</span>
-                                  <span>Posted by {material.uploader_name}</span>
-                                </p>
-                              </div>
-                              <div className="flex shrink-0 flex-wrap gap-2">
-                                {material.kind === 'FILE' ? (
-                                  <>
-                                    <a href={material.url} target="_blank" rel="noreferrer" className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-100">Open</a>
-                                    <a href={material.url} download={material.file_name || material.title} className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700">Download</a>
-                                  </>
-                                ) : (
-                                  <a href={material.url} target="_blank" rel="noreferrer" className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-100">Open link</a>
-                                )}
-                              </div>
-                            </article>
-                          ))}
-                        </div>
-                      )}
-                    </section>
                         <p className="text-xs text-slate-600 mt-0.5">
                           {p.term || 'First Term'} • <strong className="text-slate-900">₦{parseFloat(p.amount).toLocaleString()}</strong> • Initiated: {formatDateTime(p.created_at)}
                         </p>

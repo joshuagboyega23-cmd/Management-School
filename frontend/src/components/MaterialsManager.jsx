@@ -9,8 +9,9 @@ export default function MaterialsManager({ students, onNotify }) {
   const [uploading, setUploading] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
   const [mode, setMode] = useState('FILE');
-  const [form, setForm] = useState({ title: '', description: '', classId: '', link: '' });
+  const [form, setForm] = useState({ title: '', description: '', classIds: [], link: '' });
   const [file, setFile] = useState(null);
+  const [filterClassId, setFilterClassId] = useState('');
   const fileInputRef = useRef(null);
   const [currentUser] = useState(() => {
     try {
@@ -25,6 +26,12 @@ export default function MaterialsManager({ students, onNotify }) {
       .filter((student) => student.class_id && student.class_name)
       .map((student) => [String(student.class_id), { id: student.class_id, name: student.class_name }])
   ).values()];
+  const materialClasses = [...new Map(
+    materials
+      .filter((material) => material.class_id && material.class_name)
+      .map((material) => [String(material.class_id), { id: material.class_id, name: material.class_name }])
+  ).values()];
+  const filteredMaterials = materials.filter((material) => !filterClassId || String(material.class_id) === filterClassId);
 
   const fetchMaterials = async () => {
     try {
@@ -47,7 +54,7 @@ export default function MaterialsManager({ students, onNotify }) {
     const payload = new FormData();
     payload.append('title', form.title.trim());
     payload.append('description', form.description.trim());
-    payload.append('classId', form.classId);
+    form.classIds.forEach((classId) => payload.append('classIds', classId));
     if (mode === 'FILE' && file) payload.append('file', file);
     if (mode === 'LINK') payload.append('link', form.link.trim());
 
@@ -55,7 +62,7 @@ export default function MaterialsManager({ students, onNotify }) {
       setUploading(true);
       await API.post('/materials', payload);
       onNotify('success', 'Learning material shared successfully.');
-      setForm({ title: '', description: '', classId: '', link: '' });
+      setForm({ title: '', description: '', classIds: [], link: '' });
       setFile(null);
       if (fileInputRef.current) fileInputRef.current.value = '';
       await fetchMaterials();
@@ -105,17 +112,32 @@ export default function MaterialsManager({ students, onNotify }) {
             />
           </div>
           <div>
-            <label className="mb-1 block text-xs font-semibold text-slate-600">Class</label>
-            <select
-              value={form.classId}
-              onChange={(event) => setForm({ ...form, classId: event.target.value })}
-              className="w-full rounded-lg border border-slate-300 bg-white p-2.5 text-sm"
-            >
-              <option value="">All students</option>
+            <span className="mb-2 block text-xs font-semibold text-slate-600">Share with</span>
+            <div className="space-y-2 rounded-lg border border-slate-200 p-3">
+              <label className="flex items-center gap-2 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={form.classIds.length === 0}
+                  onChange={() => setForm({ ...form, classIds: [] })}
+                />
+                All students
+              </label>
               {classes.map((classItem) => (
-                <option key={classItem.id} value={classItem.id}>{classItem.name}</option>
+                <label key={classItem.id} className="flex items-center gap-2 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={form.classIds.includes(String(classItem.id))}
+                    onChange={(event) => setForm({
+                      ...form,
+                      classIds: event.target.checked
+                        ? [...form.classIds, String(classItem.id)]
+                        : form.classIds.filter((classId) => classId !== String(classItem.id))
+                    })}
+                  />
+                  {classItem.name}
+                </label>
               ))}
-            </select>
+            </div>
           </div>
           <div>
             <span className="mb-1 block text-xs font-semibold text-slate-600">Material type</span>
@@ -140,7 +162,7 @@ export default function MaterialsManager({ students, onNotify }) {
           </div>
           {mode === 'FILE' ? (
             <div>
-              <label className="mb-1 block text-xs font-semibold text-slate-600">PDF file (max 10 MB)</label>
+              <label className="mb-1 block text-xs font-semibold text-slate-600">PDF file (max 8 MB)</label>
               <input
                 type="file"
                 ref={fileInputRef}
@@ -176,13 +198,20 @@ export default function MaterialsManager({ students, onNotify }) {
 
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
         <h3 className="mb-4 text-lg font-bold text-slate-800">Shared Materials</h3>
+        <label className="mb-3 block text-xs font-semibold text-slate-600">
+          Filter by class
+          <select value={filterClassId} onChange={(event) => setFilterClassId(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 text-sm font-normal">
+            <option value="">All classes</option>
+            {materialClasses.map((classItem) => <option key={classItem.id} value={classItem.id}>{classItem.name}</option>)}
+          </select>
+        </label>
         {materialsLoading ? (
           <p className="text-sm text-slate-500">Loading materials...</p>
-        ) : materials.length === 0 ? (
+        ) : filteredMaterials.length === 0 ? (
           <p className="text-sm text-slate-500">No materials have been shared yet.</p>
         ) : (
           <div className="divide-y divide-slate-100">
-            {materials.map((material) => (
+            {filteredMaterials.map((material) => (
               <article key={material.id} className="flex flex-col gap-3 py-4 first:pt-0 sm:flex-row sm:items-start sm:justify-between">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">

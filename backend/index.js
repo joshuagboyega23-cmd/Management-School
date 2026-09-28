@@ -28,7 +28,7 @@ const app = express();
 
 const materialUploadMiddleware = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024, files: 1 },
+  limits: { fileSize: 8 * 1024 * 1024, files: 1 },
   fileFilter: (req, file, callback) => {
     if (file.mimetype !== 'application/pdf') {
       return callback(new Error('Only PDF files are allowed.'));
@@ -41,7 +41,8 @@ const parseMaterialUpload = (req, res, next) => {
   materialUploadMiddleware(req, res, (error) => {
     if (error) {
       const status = error.code === 'LIMIT_FILE_SIZE' ? 413 : 400;
-      return res.status(status).json({ success: false, message: error.message });
+      const message = error.code === 'LIMIT_FILE_SIZE' ? 'PDF files must be 8 MB or smaller.' : error.message;
+      return res.status(status).json({ success: false, message });
     }
     next();
   });
@@ -140,6 +141,10 @@ const verifyToken = async (req, res, next) => {
     const cleanup = async () => {
       if (released) return;
       released = true;
+      if (req.dbTransactionCommitted) {
+        client.release();
+        return;
+      }
       try {
         if (res.statusCode >= 400) {
           await client.query('ROLLBACK');
@@ -1198,10 +1203,23 @@ app.get('/api/teachers', verifyToken, requireRole('ADMIN', 'SUPERADMIN'), async 
 app.get('/api/parents', verifyToken, requireRole('ADMIN', 'SUPERADMIN'), async (req, res) => {
   try {
     const parents = await req.db.query(
-      `SELECT id, full_name, email
-       FROM users
-       WHERE role = 'PARENT'
-       ORDER BY full_name`
+      `SELECT u.id, u.full_name, u.email,
+              COALESCE(
+                json_agg(DISTINCT jsonb_build_object(
+                  'name', s.full_name,
+                  'admission_number', s.admission_number,
+                  'class_id', s.class_id,
+                  'class', c.name
+                )) FILTER (WHERE s.id IS NOT NULL),
+                '[]'::json
+              ) AS children
+       FROM users u
+       LEFT JOIN parent_student_links l ON l.parent_user_id = u.id
+       LEFT JOIN students s ON s.id = l.student_id
+       LEFT JOIN classes c ON c.id = s.class_id
+       WHERE u.role = 'PARENT'
+       GROUP BY u.id
+       ORDER BY u.full_name`
     );
     res.json({ success: true, data: parents.rows });
   } catch (error) {
@@ -1233,7 +1251,9 @@ app.post('/api/materials', verifyToken, requireRole('TEACHER', 'ADMIN', 'SUPERAD
   try {
     const title = String(req.body.title || '').trim();
     const description = String(req.body.description || '').trim() || null;
-    const rawClassId = String(req.body.classId || '').trim();
+    const requestedClassIds = req.body.classIds ?? req.body.classId ?? [];
+    const classValues = Array.isArray(requestedClassIds) ? requestedClassIds : [requestedClassIds];
+    const rawClassIds = [...new Set(classValues.map((value) => String(value || '').trim()).filter(Boolean))];
     const link = String(req.body.link || '').trim();
     const hasFile = Boolean(req.file);
     const hasLink = Boolean(link);
@@ -1245,14 +1265,14 @@ app.post('/api/materials', verifyToken, requireRole('TEACHER', 'ADMIN', 'SUPERAD
       return res.status(400).json({ success: false, message: 'Provide exactly one PDF file or link.' });
     }
 
-    let classId = null;
-    if (rawClassId) {
-      classId = Number(rawClassId);
-      if (!Number.isInteger(classId) || classId <= 0) {
+    let classIds = [];
+    if (rawClassIds.length > 0) {
+      classIds = rawClassIds.map(Number);
+      if (classIds.some((classId) => !Number.isInteger(classId) || classId <= 0)) {
         return res.status(400).json({ success: false, message: 'Select a valid class.' });
       }
-      const classResult = await req.db.query('SELECT 1 FROM classes WHERE id = $1', [classId]);
-      if (classResult.rows.length === 0) {
+      const classResult = await req.db.query('SELECT id FROM classes WHERE id = ANY($1::int[])', [classIds]);
+      if (classResult.rows.length !== classIds.length) {
         return res.status(400).json({ success: false, message: 'Select a valid class.' });
       }
     }
@@ -1290,13 +1310,18 @@ app.post('/api/materials', verifyToken, requireRole('TEACHER', 'ADMIN', 'SUPERAD
       url = parsedUrl.href;
     }
 
-    const result = await req.db.query(
-      `INSERT INTO materials (title, description, class_id, kind, url, file_name, file_size, uploaded_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-       RETURNING *`,
-      [title, description, classId, kind, url, originalFileName, fileSize, req.user.id]
-    );
-    res.status(201).json({ success: true, data: result.rows[0] });
+    const targetClassIds = classIds.length > 0 ? classIds : [null];
+    const createdMaterials = [];
+    for (const classId of targetClassIds) {
+      const result = await req.db.query(
+        `INSERT INTO materials (title, description, class_id, kind, url, file_name, file_size, uploaded_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         RETURNING *`,
+        [title, description, classId, kind, url, originalFileName, fileSize, req.user.id]
+      );
+      createdMaterials.push(result.rows[0]);
+    }
+    res.status(201).json({ success: true, data: createdMaterials[0], createdCount: createdMaterials.length });
   } catch (error) {
     if (uploadedAsset?.public_id) {
       try {
@@ -1353,7 +1378,10 @@ app.delete('/api/materials/:id', verifyToken, async (req, res) => {
 
     await req.db.query('DELETE FROM materials WHERE id = $1', [material.id]);
     const cloudinaryPublicId = material.kind === 'FILE' ? getCloudinaryPublicId(material.url) : null;
-    if (cloudinaryPublicId) {
+    const remainingReferences = cloudinaryPublicId
+      ? await req.db.query('SELECT COUNT(*)::int AS count FROM materials WHERE url = $1', [material.url])
+      : { rows: [{ count: 1 }] };
+    if (cloudinaryPublicId && Number(remainingReferences.rows[0].count) === 0) {
       try {
         await cloudinary.uploader.destroy(cloudinaryPublicId, { resource_type: 'raw' });
       } catch (error) {
@@ -1795,7 +1823,8 @@ app.post('/api/payments/initialize', verifyToken, validate(schemas.paymentInit),
       reference
     });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.response?.data?.message || err.message });
+    console.error('Paystack transaction initialization failed:', err.response?.data || err.message);
+    res.status(500).json({ success: false, message: err.response?.data?.message || err.response?.data?.error || err.message });
   }
 });
 
@@ -1968,7 +1997,7 @@ app.get('/api/announcements', verifyToken, async (req, res) => {
     } else if (role === 'TEACHER') {
       whereClause = 'WHERE visible_to_teachers = TRUE';
     } else if (role === 'ADMIN' || role === 'SUPERADMIN') {
-      whereClause = 'WHERE visible_to_students = TRUE OR visible_to_parents = TRUE OR visible_to_teachers = TRUE';
+      whereClause = 'WHERE TRUE';
     }
 
     const announcements = await (req.db || pool).query(
@@ -1986,6 +2015,27 @@ app.get('/api/announcements', verifyToken, async (req, res) => {
   }
 });
 
+app.delete('/api/announcements/:id', verifyToken, requireRole('ADMIN', 'SUPERADMIN'), async (req, res) => {
+  try {
+    const announcementId = Number(req.params.id);
+    if (!Number.isInteger(announcementId) || announcementId <= 0) {
+      return res.status(404).json({ success: false, message: 'Announcement not found.' });
+    }
+
+    const result = await req.db.query(
+      'DELETE FROM announcements WHERE id = $1 RETURNING id',
+      [announcementId]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Announcement not found.' });
+    }
+
+    res.json({ success: true, message: 'Announcement and any linked event were deleted.' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Could not delete announcement.' });
+  }
+});
+
 const canAccessConversation = (conversation, user) => {
   if (Number(conversation.created_by) === Number(user.id)) return true;
 
@@ -1995,6 +2045,33 @@ const canAccessConversation = (conversation, user) => {
 
   return conversation.target_role === user.role &&
     Number(conversation.target_user_id) === Number(user.id);
+};
+
+const queueMessageEmailNotice = ({ userIds = [], roles = [] }) => {
+  void (async () => {
+    try {
+      const recipients = userIds.length > 0
+        ? await pool.query(
+          `SELECT DISTINCT email FROM users
+           WHERE id = ANY($1::int[]) AND email IS NOT NULL AND BTRIM(email) <> ''`,
+          [userIds]
+        )
+        : await pool.query(
+          `SELECT DISTINCT email FROM users
+           WHERE role = ANY($1::text[]) AND email IS NOT NULL AND BTRIM(email) <> ''`,
+          [roles]
+        );
+      const clientUrl = (process.env.CLIENT_URL || 'http://localhost:5173').replace(/\/$/, '');
+      const text = `You have a new message from Pinnacle Heights Academy. Log in to the portal to read it: ${clientUrl}/login`;
+      await Promise.all(recipients.rows.map(({ email }) => sendResendEmail({
+        email,
+        subject: 'New message from Pinnacle Heights Academy',
+        text
+      })));
+    } catch (error) {
+      console.error('Failed to notify message recipients:', error.message);
+    }
+  })();
 };
 
 app.post('/api/conversations', verifyToken, async (req, res) => {
@@ -2026,9 +2103,46 @@ app.post('/api/conversations', verifyToken, async (req, res) => {
       return res.status(400).json({ success: false, message: 'Student context must be a valid student ID.' });
     }
 
-    const recipients = isAdmin
-      ? await req.db.query('SELECT id FROM users WHERE role = $1 ORDER BY id', [targetRole])
-      : { rows: [{ id: null }] };
+    let recipients;
+    if (!isAdmin) {
+      recipients = { rows: [{ id: null }] };
+    } else {
+      const audience = req.body.audience || { mode: 'ALL' };
+      const mode = audience.mode;
+      if (!['ALL', 'CLASSES', 'SELECTED'].includes(mode) || (targetRole === 'TEACHER' && mode === 'CLASSES')) {
+        return res.status(400).json({ success: false, message: 'Invalid audience for recipient type.' });
+      }
+
+      if (mode === 'ALL') {
+        recipients = await req.db.query('SELECT id FROM users WHERE role = $1 ORDER BY id', [targetRole]);
+      } else if (mode === 'CLASSES') {
+        const classIds = [...new Set((Array.isArray(audience.classIds) ? audience.classIds : []).map(Number))];
+        if (!classIds.length || classIds.some((id) => !Number.isInteger(id) || id <= 0)) {
+          return res.status(400).json({ success: false, message: 'Select at least one valid class.' });
+        }
+        recipients = await req.db.query(
+          `SELECT DISTINCT u.id
+           FROM users u
+           JOIN parent_student_links l ON l.parent_user_id = u.id
+           JOIN students s ON s.id = l.student_id
+           WHERE u.role = 'PARENT' AND s.class_id = ANY($1::int[])
+           ORDER BY u.id`,
+          [classIds]
+        );
+      } else {
+        const userIds = [...new Set((Array.isArray(audience.userIds) ? audience.userIds : []).map(Number))];
+        if (!userIds.length || userIds.some((id) => !Number.isInteger(id) || id <= 0)) {
+          return res.status(400).json({ success: false, message: 'Select at least one valid recipient.' });
+        }
+        recipients = await req.db.query(
+          'SELECT id FROM users WHERE id = ANY($1::int[]) AND role = $2 ORDER BY id',
+          [userIds, targetRole]
+        );
+        if (recipients.rows.length !== userIds.length) {
+          return res.status(400).json({ success: false, message: 'Every selected recipient must have the requested role.' });
+        }
+      }
+    }
 
     if (recipients.rows.length === 0) {
       return res.status(400).json({ success: false, message: 'No registered parents/teachers yet.' });
@@ -2051,6 +2165,13 @@ app.post('/api/conversations', verifyToken, async (req, res) => {
       );
       createdThreads.push(conversation);
     }
+
+    await req.db.query('COMMIT');
+    req.dbTransactionCommitted = true;
+    queueMessageEmailNotice(isAdmin
+      ? { userIds: recipients.rows.map((recipient) => recipient.id) }
+      : { roles: ['ADMIN', 'SUPERADMIN'] }
+    );
 
     res.status(201).json({
       success: true,
@@ -2175,6 +2296,14 @@ app.post('/api/conversations/:id/messages', verifyToken, async (req, res) => {
        VALUES ($1, $2, $3)
        RETURNING *`,
       [conversationId, req.user.id, String(body).trim()]
+    );
+
+    await req.db.query('COMMIT');
+    req.dbTransactionCommitted = true;
+    const isAdmin = ['ADMIN', 'SUPERADMIN'].includes(req.user.role);
+    queueMessageEmailNotice(isAdmin
+      ? { userIds: [conversation.target_role === 'ADMIN' ? conversation.created_by : conversation.target_user_id] }
+      : { roles: ['ADMIN', 'SUPERADMIN'] }
     );
 
     res.status(201).json({ success: true, data: message.rows[0] });
