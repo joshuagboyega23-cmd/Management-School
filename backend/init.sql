@@ -157,6 +157,28 @@ CREATE TABLE IF NOT EXISTS messages (
     read_at TIMESTAMP NULL
 );
 
+CREATE TABLE IF NOT EXISTS materials (
+    id SERIAL PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    description TEXT,
+    class_id INT REFERENCES classes(id) ON DELETE CASCADE,
+    kind VARCHAR(10) NOT NULL CHECK (kind IN ('FILE', 'LINK')),
+    url TEXT NOT NULL,
+    file_name VARCHAR(255),
+    file_size INT,
+    uploaded_by INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS password_resets (
+    id SERIAL PRIMARY KEY,
+    user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash VARCHAR(64) NOT NULL,
+    expires_at TIMESTAMP NOT NULL,
+    used_at TIMESTAMP NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- 13. Staff Payroll Table
 CREATE TABLE IF NOT EXISTS payroll (
     id SERIAL PRIMARY KEY,

@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { GraduationCap, Lock, Mail, ArrowLeft, LogIn, AlertCircle, Heart, BookOpen, ShieldCheck } from 'lucide-react';
-import API from '../opi';
+import { getAuthErrorMessage, postAuthRequest, SERVER_WAKING_MESSAGE, wakeServer } from '../opi';
+import PasswordInput from './PasswordInput';
 
 export default function Login() {
   const navigate = useNavigate();
@@ -9,9 +10,14 @@ export default function Login() {
   const [formData, setFormData] = useState({
     email: '',
     password: '',
+    admissionNumber: '',
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    wakeServer();
+  }, []);
 
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
@@ -24,11 +30,13 @@ export default function Login() {
     setError('');
 
     try {
-      const res = await API.post('/auth/login', {
-        email: formData.email,
+      const res = await postAuthRequest('/auth/login', {
+        email: formData.email.trim(),
         password: formData.password,
-        portal: activeRole.toLowerCase()
-      });
+        portal: activeRole.toLowerCase(),
+        admissionNumber: formData.admissionNumber.trim()
+      }, () => setError(SERVER_WAKING_MESSAGE));
+      setError('');
 
       if (res.data.success) {
         localStorage.setItem('token', res.data.token);
@@ -44,11 +52,7 @@ export default function Login() {
         }
       }
     } catch (err) {
-      setError(
-        err.response?.data?.message ||
-        err.response?.data?.error ||
-        'Login failed. Please check your credentials.'
-      );
+      setError(getAuthErrorMessage(err, 'Login failed. Please check your credentials.'));
     } finally {
       setLoading(false);
     }
@@ -128,21 +132,34 @@ export default function Login() {
             </div>
 
             <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1">
+                {activeRole === 'PARENT' ? 'Admission number of any one of your children' : 'Admission Number'}
+              </label>
+              <input
+                type="text"
+                name="admissionNumber"
+                value={formData.admissionNumber}
+                onChange={handleChange}
+                required
+                placeholder="PHA-2026-0001"
+                className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-slate-500 uppercase font-mono"
+              />
+            </div>
+
+            <div>
               <label className="block text-xs font-semibold text-slate-300 mb-1">Password</label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
-                  <Lock className="h-4 w-4" />
-                </div>
-                <input
-                  type="password"
-                  name="password"
-                  value={formData.password}
-                  onChange={handleChange}
-                  required
-                  placeholder="••••••••"
-                  className="w-full pl-10 pr-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-slate-500"
-                />
-              </div>
+              <PasswordInput
+                leadingIcon={<Lock className="h-4 w-4" />}
+                name="password"
+                value={formData.password}
+                onChange={handleChange}
+                required
+                placeholder="••••••••"
+                className="w-full pl-10 pr-10 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-slate-500"
+              />
+            </div>
+            <div className="-mt-2 text-right">
+              <Link to={`/forgot-password?portal=${activeRole.toLowerCase()}`} className="text-xs font-semibold text-blue-400 hover:text-blue-300">Forgot password?</Link>
             </div>
 
             <button

@@ -6,8 +6,11 @@ const sendAnnouncementEmails = require('./announcementEmails');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
+const path = require('path');
+const multer = require('multer');
 const rateLimit = require('express-rate-limit');
 const pool = require('./db');
+const { cloudinary, cloudinaryConfigured } = require('./cloudinary');
 require('dotenv').config();
 
 // ─── Startup Guard ────────────────────────────────────────────────────────────
@@ -23,6 +26,27 @@ if (!process.env.DATABASE_URL) {
 
 const app = express();
 
+const materialUploadMiddleware = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024, files: 1 },
+  fileFilter: (req, file, callback) => {
+    if (file.mimetype !== 'application/pdf') {
+      return callback(new Error('Only PDF files are allowed.'));
+    }
+    callback(null, true);
+  }
+}).single('file');
+
+const parseMaterialUpload = (req, res, next) => {
+  materialUploadMiddleware(req, res, (error) => {
+    if (error) {
+      const status = error.code === 'LIMIT_FILE_SIZE' ? 413 : 400;
+      return res.status(status).json({ success: false, message: error.message });
+    }
+    next();
+  });
+};
+
 // Rate limiter for self-registration endpoints (defense against admission number enumeration)
 const registrationLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
@@ -31,6 +55,17 @@ const registrationLimiter = rateLimit({
     success: false,
     message: 'Too many registration attempts from this IP. Please try again after an hour.'
   },
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
+const passwordResetLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  handler: (req, res) => res.status(200).json({
+    success: true,
+    message: 'If an account matches, a reset link has been sent to that email.'
+  }),
   standardHeaders: true,
   legacyHeaders: false
 });
@@ -150,7 +185,7 @@ const requireRole = (...roles) => {
 const { z } = require('zod');
 
 // Reusable field definitions
-const emailField = z.string().email('Must be a valid email address');
+const emailField = z.string().trim().toLowerCase().email('Must be a valid email address');
 const passwordField = z.string().min(8, 'Password must be at least 8 characters');
 const dateField = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY-MM-DD format');
 
@@ -159,16 +194,28 @@ const schemas = {
   login: z.object({
     email: emailField,
     password: z.string().min(1, 'Password is required'),
+    admissionNumber: z.string().trim().optional(),
     portal: z.enum(['student', 'parent', 'teacher', 'admin'], {
-      errorMap: () => ({ message: "Portal must be 'student', 'parent', 'teacher', or 'admin'" })
+      error: "Portal must be 'student', 'parent', 'teacher', or 'admin'"
     })
+  }),
+
+  forgotPassword: z.object({
+    email: emailField,
+    portal: z.enum(['student', 'parent', 'teacher', 'admin']),
+    admissionNumber: z.string().trim().optional()
+  }),
+
+  resetPassword: z.object({
+    token: z.string().min(1, 'Reset token is required'),
+    newPassword: passwordField
   }),
 
   adminRegister: z.object({
     full_name: z.string().min(2, 'Full name must be at least 2 characters'),
     email: emailField,
     password: passwordField,
-    role: z.enum(['ADMIN'], { errorMap: () => ({ message: "Role must be 'ADMIN'" }) })
+    role: z.enum(['ADMIN'], { error: "Role must be 'ADMIN'" })
   }),
 
   studentSelfRegister: z.object({
@@ -228,7 +275,7 @@ const schemas = {
   gradeSubmit: z.object({
     studentId: z.number().int().positive('studentId must be a positive integer'),
     term: z.enum(['First Term', 'Second Term', 'Third Term'], {
-      errorMap: () => ({ message: "Term must be 'First Term', 'Second Term', or 'Third Term'" })
+      error: "Term must be 'First Term', 'Second Term', or 'Third Term'"
     }),
     subject: z.string().min(2, 'Subject name is required'),
     caScore: z.number().min(0).max(40, 'CA score must be between 0 and 40'),
@@ -256,15 +303,19 @@ const schemas = {
 const validate = (schema) => (req, res, next) => {
   const result = schema.safeParse(req.body);
   if (!result.success) {
-    const errors = result.error.errors.map((e) => ({
+    const errors = result.error.issues.map((e) => ({
       field: e.path.join('.'),
       message: e.message
     }));
-    return res.status(400).json({ success: false, message: 'Validation failed', errors });
+    return res.status(400).json({ success: false, message: errors[0]?.message || 'Validation failed', errors });
   }
   req.body = result.data; // replace with coerced/safe data
   next();
 };
+
+app.get('/api/health', (req, res) => {
+  res.json({ ok: true });
+});
 
 // =============================================================
 // HEALTH CHECK
@@ -854,33 +905,57 @@ app.post('/api/auth/register/teacher', registrationLimiter, validate(schemas.tea
 });
 
 app.post('/api/auth/login', validate(schemas.login), async (req, res) => {
-  const { email, password, portal } = req.body;
+  const { email, password, portal, admissionNumber } = req.body;
 
   if (!email || !password || !portal) {
     return res.status(400).json({ success: false, message: 'Email, password, and portal are required.' });
   }
 
-  // Role-to-Portal Authorization Mapping
-  const allowedRolesByPortal = {
-    'student': ['STUDENT'],
-    'parent': ['PARENT'],
-    'teacher': ['TEACHER'],
-    'admin': ['ADMIN', 'SUPERADMIN']
-  };
-
-  const allowedRoles = allowedRolesByPortal[portal] || [];
-  if (allowedRoles.length === 0) {
-    return res.status(400).json({ success: false, message: 'Invalid email or password.' });
-  }
+  const genericPortalMessage = portal === 'student' || portal === 'parent'
+    ? 'Invalid email, password or admission number.'
+    : 'Invalid email or password.';
 
   try {
-    const userResult = await pool.query(
-      'SELECT * FROM users WHERE LOWER(email) = LOWER($1) AND role = ANY($2::text[])',
-      [email.trim(), allowedRoles]
-    );
+    let userResult;
+
+    if (portal === 'student' || portal === 'parent') {
+      const normalizedAdmissionNumber = admissionNumber?.trim();
+      if (!normalizedAdmissionNumber) {
+        return res.status(400).json({ success: false, message: genericPortalMessage });
+      }
+
+      if (portal === 'student') {
+        userResult = await pool.query(
+          `SELECT u.*
+           FROM users u
+           JOIN students s ON s.user_id = u.id
+           WHERE LOWER(u.email) = LOWER($1)
+             AND UPPER(s.admission_number) = UPPER($2)
+             AND u.role = 'STUDENT'`,
+          [email, normalizedAdmissionNumber]
+        );
+      } else {
+        userResult = await pool.query(
+          `SELECT DISTINCT u.*
+           FROM users u
+           JOIN parent_student_links l ON l.parent_user_id = u.id
+           JOIN students s ON s.id = l.student_id
+           WHERE LOWER(u.email) = LOWER($1)
+             AND UPPER(s.admission_number) = UPPER($2)
+             AND u.role = 'PARENT'`,
+          [email, normalizedAdmissionNumber]
+        );
+      }
+    } else {
+      const allowedRoles = portal === 'teacher' ? ['TEACHER'] : ['ADMIN', 'SUPERADMIN'];
+      userResult = await pool.query(
+        'SELECT * FROM users WHERE LOWER(email) = LOWER($1) AND role = ANY($2::text[])',
+        [email, allowedRoles]
+      );
+    }
 
     if (userResult.rows.length === 0) {
-      return res.status(400).json({ success: false, message: 'Invalid email or password.' });
+      return res.status(400).json({ success: false, message: genericPortalMessage });
     }
 
     // Match password against accounts matching the portal's allowed roles
@@ -894,7 +969,7 @@ app.post('/api/auth/login', validate(schemas.login), async (req, res) => {
     }
 
     if (!matchedUser) {
-      return res.status(400).json({ success: false, message: 'Invalid email or password.' });
+      return res.status(400).json({ success: false, message: genericPortalMessage });
     }
 
     const token = jwt.sign(
@@ -921,6 +996,157 @@ app.post('/api/auth/login', validate(schemas.login), async (req, res) => {
 // =============================================================
 // 2. STUDENT & REPORT CARD MODULE
 // =============================================================
+
+const sendResendEmail = require('./announcementEmails').sendResendEmail;
+
+app.post('/api/auth/forgot-password', passwordResetLimiter, async (req, res) => {
+  const genericResponse = () => res.status(200).json({
+    success: true,
+    message: 'If an account matches, a reset link has been sent to that email.'
+  });
+  const parsed = schemas.forgotPassword.safeParse(req.body);
+  if (!parsed.success) return genericResponse();
+
+  const { email, portal, admissionNumber } = parsed.data;
+  if (['student', 'parent'].includes(portal) && !admissionNumber) return genericResponse();
+
+  const linksByEmail = new Map();
+  let client;
+  try {
+    client = await pool.connect();
+    await client.query('BEGIN');
+
+    let userResult;
+    if (portal === 'student') {
+      userResult = await client.query(
+        `SELECT u.*
+         FROM users u
+         JOIN students s ON s.user_id = u.id
+         WHERE LOWER(u.email) = LOWER($1)
+           AND UPPER(s.admission_number) = UPPER($2)
+           AND u.role = 'STUDENT'`,
+        [email, admissionNumber]
+      );
+    } else if (portal === 'parent') {
+      userResult = await client.query(
+        `SELECT DISTINCT u.*
+         FROM users u
+         JOIN parent_student_links l ON l.parent_user_id = u.id
+         JOIN students s ON s.id = l.student_id
+         WHERE LOWER(u.email) = LOWER($1)
+           AND UPPER(s.admission_number) = UPPER($2)
+           AND u.role = 'PARENT'`,
+        [email, admissionNumber]
+      );
+    } else {
+      const roles = portal === 'teacher' ? ['TEACHER'] : ['ADMIN', 'SUPERADMIN'];
+      userResult = await client.query(
+        'SELECT * FROM users WHERE LOWER(email) = LOWER($1) AND role = ANY($2::text[])',
+        [email, roles]
+      );
+    }
+
+    const clientUrl = (process.env.CLIENT_URL || 'http://localhost:5173').replace(/\/$/, '');
+    for (const user of userResult.rows) {
+      const token = crypto.randomBytes(32).toString('hex');
+      const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+      const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
+
+      await client.query(
+        'DELETE FROM password_resets WHERE user_id = $1 AND used_at IS NULL',
+        [user.id]
+      );
+      await client.query(
+        `INSERT INTO password_resets (user_id, token_hash, expires_at)
+         VALUES ($1, $2, $3)`,
+        [user.id, tokenHash, expiresAt]
+      );
+
+      const accountPortal = user.role === 'SUPERADMIN' ? 'admin' : user.role.toLowerCase();
+      const resetLink = `${clientUrl}/reset-password?token=${encodeURIComponent(token)}&portal=${accountPortal}`;
+      const emailKey = user.email.toLowerCase();
+      if (!linksByEmail.has(emailKey)) {
+        linksByEmail.set(emailKey, { email: user.email, links: [] });
+      }
+      linksByEmail.get(emailKey).links.push({ role: user.role, url: resetLink });
+    }
+
+    await client.query('COMMIT');
+  } catch (error) {
+    if (client) {
+      try {
+        await client.query('ROLLBACK');
+      } catch (rollbackError) {
+        console.error('Failed to roll back password reset request:', rollbackError.message);
+      }
+    }
+    console.error('Password reset request failed:', error.message);
+    return genericResponse();
+  } finally {
+    client?.release();
+  }
+
+  await Promise.all([...linksByEmail.values()].map(({ email: recipient, links }) => sendResendEmail({
+    email: recipient,
+    subject: 'Password reset request',
+    text: [
+      'Use the link for the account you want to reset:',
+      ...links.map(({ role, url }) => `${role}: ${url}`),
+      'Each link expires in 60 minutes.'
+    ].join('\n\n')
+  })));
+
+  return genericResponse();
+});
+
+app.post('/api/auth/reset-password', async (req, res) => {
+  const parsed = schemas.resetPassword.safeParse(req.body);
+  if (!parsed.success) {
+    const errors = parsed.error.issues.map((issue) => ({ field: issue.path.join('.'), message: issue.message }));
+    return res.status(400).json({ success: false, message: errors[0]?.message || 'Invalid reset request.', errors });
+  }
+
+  const tokenHash = crypto.createHash('sha256').update(parsed.data.token).digest('hex');
+  let client;
+  try {
+    client = await pool.connect();
+    await client.query('BEGIN');
+    const resetResult = await client.query(
+      `SELECT id, user_id
+       FROM password_resets
+       WHERE token_hash = $1 AND used_at IS NULL AND expires_at > NOW()
+       FOR UPDATE`,
+      [tokenHash]
+    );
+
+    if (resetResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ success: false, message: 'This reset link is invalid, expired, or already used.' });
+    }
+
+    const userId = resetResult.rows[0].user_id;
+    const passwordHash = await bcrypt.hash(parsed.data.newPassword, 10);
+    await client.query('UPDATE users SET password_hash = $1 WHERE id = $2', [passwordHash, userId]);
+    await client.query(
+      'UPDATE password_resets SET used_at = NOW() WHERE user_id = $1 AND used_at IS NULL',
+      [userId]
+    );
+    await client.query('COMMIT');
+    res.json({ success: true, message: 'Password reset successfully. You can now sign in.' });
+  } catch (error) {
+    if (client) {
+      try {
+        await client.query('ROLLBACK');
+      } catch (rollbackError) {
+        console.error('Failed to roll back password update:', rollbackError.message);
+      }
+    }
+    console.error('Password update failed:', error.message);
+    res.status(500).json({ success: false, message: 'Could not reset password. Please try again.' });
+  } finally {
+    client?.release();
+  }
+});
 
 app.get('/api/students', verifyToken, requireRole('ADMIN', 'SUPERADMIN', 'TEACHER'), async (req, res) => {
   try {
@@ -980,6 +1206,212 @@ app.get('/api/parents', verifyToken, requireRole('ADMIN', 'SUPERADMIN'), async (
     res.json({ success: true, data: parents.rows });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+const uploadMaterialPdf = (buffer, publicId) => new Promise((resolve, reject) => {
+  cloudinary.uploader.upload_stream(
+    { folder: 'school-materials', public_id: publicId, resource_type: 'raw' },
+    (error, result) => error ? reject(error) : resolve(result)
+  ).end(buffer);
+});
+
+const getCloudinaryPublicId = (secureUrl) => {
+  try {
+    const pathname = new URL(secureUrl).pathname;
+    const uploadPath = '/raw/upload/';
+    const uploadIndex = pathname.indexOf(uploadPath);
+    if (uploadIndex === -1) return null;
+    return decodeURIComponent(pathname.slice(uploadIndex + uploadPath.length).replace(/^v\d+\//, ''));
+  } catch (error) {
+    return null;
+  }
+};
+
+app.post('/api/materials', verifyToken, requireRole('TEACHER', 'ADMIN', 'SUPERADMIN'), parseMaterialUpload, async (req, res) => {
+  let uploadedAsset;
+  try {
+    const title = String(req.body.title || '').trim();
+    const description = String(req.body.description || '').trim() || null;
+    const rawClassId = String(req.body.classId || '').trim();
+    const link = String(req.body.link || '').trim();
+    const hasFile = Boolean(req.file);
+    const hasLink = Boolean(link);
+
+    if (!title) {
+      return res.status(400).json({ success: false, message: 'Title is required.' });
+    }
+    if (hasFile === hasLink) {
+      return res.status(400).json({ success: false, message: 'Provide exactly one PDF file or link.' });
+    }
+
+    let classId = null;
+    if (rawClassId) {
+      classId = Number(rawClassId);
+      if (!Number.isInteger(classId) || classId <= 0) {
+        return res.status(400).json({ success: false, message: 'Select a valid class.' });
+      }
+      const classResult = await req.db.query('SELECT 1 FROM classes WHERE id = $1', [classId]);
+      if (classResult.rows.length === 0) {
+        return res.status(400).json({ success: false, message: 'Select a valid class.' });
+      }
+    }
+
+    let kind;
+    let url;
+    let originalFileName = null;
+    let fileSize = null;
+
+    if (hasFile) {
+      if (!cloudinaryConfigured) {
+        return res.status(503).json({ success: false, message: 'File uploads are not configured yet' });
+      }
+      if (req.file.mimetype !== 'application/pdf' || req.file.buffer.subarray(0, 4).toString('ascii') !== '%PDF') {
+        return res.status(400).json({ success: false, message: 'The uploaded file must be a valid PDF.' });
+      }
+
+      originalFileName = path.basename(req.file.originalname || 'material.pdf').replace(/[\\/]/g, '_');
+      const cloudinaryPublicId = `${crypto.randomUUID()}-${originalFileName.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+      uploadedAsset = await uploadMaterialPdf(req.file.buffer, cloudinaryPublicId);
+      kind = 'FILE';
+      url = uploadedAsset.secure_url;
+      fileSize = req.file.size;
+    } else {
+      let parsedUrl;
+      try {
+        parsedUrl = new URL(link);
+      } catch (error) {
+        return res.status(400).json({ success: false, message: 'Link must be a valid http or https URL.' });
+      }
+      if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+        return res.status(400).json({ success: false, message: 'Link must be a valid http or https URL.' });
+      }
+      kind = 'LINK';
+      url = parsedUrl.href;
+    }
+
+    const result = await req.db.query(
+      `INSERT INTO materials (title, description, class_id, kind, url, file_name, file_size, uploaded_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       RETURNING *`,
+      [title, description, classId, kind, url, originalFileName, fileSize, req.user.id]
+    );
+    res.status(201).json({ success: true, data: result.rows[0] });
+  } catch (error) {
+    if (uploadedAsset?.public_id) {
+      try {
+        await cloudinary.uploader.destroy(uploadedAsset.public_id, { resource_type: 'raw' });
+      } catch (cleanupError) {
+        console.error('Failed to clean up unreferenced material upload:', cleanupError.message);
+      }
+    }
+    console.error('Material upload failed:', error.message);
+    res.status(500).json({ success: false, message: 'Could not save learning material.' });
+  }
+});
+
+app.get('/api/materials', verifyToken, async (req, res) => {
+  try {
+    const role = req.user.role;
+    if (role === 'PARENT' || !['STUDENT', 'TEACHER', 'ADMIN', 'SUPERADMIN'].includes(role)) {
+      return res.status(403).json({ success: false, message: 'Learning materials are not available to this role.' });
+    }
+
+    let query = `
+      SELECT m.*, u.full_name AS uploader_name, c.name AS class_name
+      FROM materials m
+      JOIN users u ON u.id = m.uploaded_by
+      LEFT JOIN classes c ON c.id = m.class_id`;
+    const params = [];
+    if (role === 'STUDENT') {
+      query += `
+        WHERE m.class_id IS NULL OR m.class_id = (
+          SELECT s.class_id FROM students s WHERE s.user_id = $1
+        )`;
+      params.push(req.user.id);
+    }
+    query += ' ORDER BY m.created_at DESC';
+    const result = await req.db.query(query, params);
+    res.json({ success: true, data: result.rows });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.delete('/api/materials/:id', verifyToken, async (req, res) => {
+  try {
+    const result = await req.db.query('SELECT * FROM materials WHERE id = $1', [Number(req.params.id)]);
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Learning material not found.' });
+    }
+
+    const material = result.rows[0];
+    const isAdmin = ['ADMIN', 'SUPERADMIN'].includes(req.user.role);
+    if (!isAdmin && Number(material.uploaded_by) !== Number(req.user.id)) {
+      return res.status(403).json({ success: false, message: 'You cannot delete this learning material.' });
+    }
+
+    await req.db.query('DELETE FROM materials WHERE id = $1', [material.id]);
+    const cloudinaryPublicId = material.kind === 'FILE' ? getCloudinaryPublicId(material.url) : null;
+    if (cloudinaryPublicId) {
+      try {
+        await cloudinary.uploader.destroy(cloudinaryPublicId, { resource_type: 'raw' });
+      } catch (error) {
+        console.error('Failed to remove material from Cloudinary:', error.message);
+      }
+    }
+    res.json({ success: true, message: 'Learning material deleted.' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Could not delete learning material.' });
+  }
+});
+
+app.get('/api/admin/users', verifyToken, requireRole('ADMIN', 'SUPERADMIN'), async (req, res) => {
+  try {
+    const query = String(req.query.query || '').trim();
+    const result = await req.db.query(
+      `SELECT DISTINCT u.id, u.full_name, u.email, u.role,
+              CASE WHEN u.role = 'STUDENT' THEN s.admission_number ELSE NULL END AS admission_number
+       FROM users u
+       LEFT JOIN students s ON s.user_id = u.id
+       WHERE $2 = ''
+          OR u.full_name ILIKE $1
+          OR u.email ILIKE $1
+          OR (u.role = 'STUDENT' AND s.admission_number ILIKE $1)
+       ORDER BY u.full_name
+       LIMIT 20`,
+      [`%${query}%`, query]
+    );
+    res.json({ success: true, data: result.rows });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/admin/reset-user-password', verifyToken, requireRole('ADMIN', 'SUPERADMIN'), async (req, res) => {
+  try {
+    const userId = Number(req.body.userId);
+    const newPassword = req.body.newPassword;
+    if (!Number.isInteger(userId) || userId <= 0 || typeof newPassword !== 'string' || newPassword.length < 8) {
+      return res.status(400).json({ success: false, message: 'Select a user and enter a password with at least 8 characters.' });
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+    const result = await req.db.query(
+      'UPDATE users SET password_hash = $1 WHERE id = $2 RETURNING id',
+      [passwordHash, userId]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'User not found.' });
+    }
+
+    await req.db.query(
+      'UPDATE password_resets SET used_at = NOW() WHERE user_id = $1 AND used_at IS NULL',
+      [userId]
+    );
+    res.json({ success: true, message: 'User password reset successfully.' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Could not reset user password.' });
   }
 });
 
@@ -1558,7 +1990,7 @@ const canAccessConversation = (conversation, user) => {
   if (Number(conversation.created_by) === Number(user.id)) return true;
 
   if (['ADMIN', 'SUPERADMIN'].includes(user.role)) {
-    return conversation.target_role === 'ADMIN';
+    return true;
   }
 
   return conversation.target_role === user.role &&
@@ -1581,24 +2013,10 @@ app.post('/api/conversations', verifyToken, async (req, res) => {
       return res.status(400).json({ success: false, message: 'Subject and message body are required.' });
     }
 
-    let targetRole = 'ADMIN';
-    let targetUserId = null;
-
-    if (['ADMIN', 'SUPERADMIN'].includes(req.user.role)) {
-      targetRole = req.body.target_role;
-      targetUserId = Number(req.body.target_user_id);
-
-      if (!['PARENT', 'TEACHER'].includes(targetRole) || !Number.isInteger(targetUserId) || targetUserId <= 0) {
-        return res.status(400).json({ success: false, message: 'A valid parent or teacher recipient is required.' });
-      }
-
-      const recipient = await req.db.query(
-        'SELECT 1 FROM users WHERE id = $1 AND role = $2',
-        [targetUserId, targetRole]
-      );
-      if (recipient.rows.length === 0) {
-        return res.status(400).json({ success: false, message: 'The selected recipient does not have the requested role.' });
-      }
+    const isAdmin = ['ADMIN', 'SUPERADMIN'].includes(req.user.role);
+    const targetRole = isAdmin ? req.body.target_role : 'ADMIN';
+    if (isAdmin && !['PARENT', 'TEACHER'].includes(targetRole)) {
+      return res.status(400).json({ success: false, message: 'Recipient type must be PARENT or TEACHER.' });
     }
 
     const studentId = req.body.student_id == null || req.body.student_id === ''
@@ -1608,22 +2026,37 @@ app.post('/api/conversations', verifyToken, async (req, res) => {
       return res.status(400).json({ success: false, message: 'Student context must be a valid student ID.' });
     }
 
-    const conversationResult = await req.db.query(
-      `INSERT INTO conversations (subject, created_by, target_role, target_user_id, student_id)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING *`,
-      [String(subject).trim(), req.user.id, targetRole, targetUserId, studentId]
-    );
+    const recipients = isAdmin
+      ? await req.db.query('SELECT id FROM users WHERE role = $1 ORDER BY id', [targetRole])
+      : { rows: [{ id: null }] };
 
-    const conversation = conversationResult.rows[0];
+    if (recipients.rows.length === 0) {
+      return res.status(400).json({ success: false, message: 'No registered parents/teachers yet.' });
+    }
 
-    await req.db.query(
-      `INSERT INTO messages (conversation_id, sender_id, body)
-       VALUES ($1, $2, $3)`,
-      [conversation.id, req.user.id, String(body).trim()]
-    );
+    const createdThreads = [];
+    for (const recipient of recipients.rows) {
+      const conversationResult = await req.db.query(
+        `INSERT INTO conversations (subject, created_by, target_role, target_user_id, student_id)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING *`,
+        [String(subject).trim(), req.user.id, targetRole, recipient.id, studentId]
+      );
+      const conversation = conversationResult.rows[0];
 
-    res.status(201).json({ success: true, data: conversation });
+      await req.db.query(
+        `INSERT INTO messages (conversation_id, sender_id, body)
+         VALUES ($1, $2, $3)`,
+        [conversation.id, req.user.id, String(body).trim()]
+      );
+      createdThreads.push(conversation);
+    }
+
+    res.status(201).json({
+      success: true,
+      data: createdThreads[0],
+      threadsCreated: createdThreads.length
+    });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -1654,9 +2087,6 @@ app.get('/api/conversations', verifyToken, async (req, res) => {
       params.push(req.user.id);
     } else if (role === 'TEACHER') {
       query += ` AND (c.created_by = $2 OR (c.target_role = 'TEACHER' AND c.target_user_id = $2))`;
-      params.push(req.user.id);
-    } else {
-      query += ` AND (c.target_role = 'ADMIN' OR c.created_by = $2)`;
       params.push(req.user.id);
     }
 
@@ -1794,6 +2224,12 @@ app.get('/api/payroll/history', verifyToken, requireRole('ADMIN', 'SUPERADMIN'),
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
+});
+
+app.use((error, req, res, next) => {
+  console.error('Unhandled API error:', error);
+  if (res.headersSent) return next(error);
+  res.status(500).json({ success: false, message: 'Something went wrong. Please try again.' });
 });
 
 // Start Express Server

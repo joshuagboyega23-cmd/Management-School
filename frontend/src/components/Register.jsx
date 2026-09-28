@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { GraduationCap, Lock, Mail, User, Calendar, Hash, ArrowLeft, UserPlus, AlertCircle, Heart, BookOpen } from 'lucide-react';
-import API from '../opi';
+import { getAuthErrorMessage, postAuthRequest, SERVER_WAKING_MESSAGE, wakeServer } from '../opi';
+import PasswordInput from './PasswordInput';
 
 export default function Register() {
   const navigate = useNavigate();
@@ -18,15 +19,22 @@ export default function Register() {
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+
+  useEffect(() => {
+    wakeServer();
+  }, []);
 
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
     if (error) setError('');
+    if (success) setSuccess('');
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+    setSuccess('');
 
     if (formData.password !== formData.confirmPassword) {
       setError('Passwords do not match. Please ensure both password fields are identical.');
@@ -39,7 +47,7 @@ export default function Register() {
       let endpoint = '/auth/register/student';
       let payload = {
         fullName: formData.fullName,
-        email: formData.email,
+        email: formData.email.trim(),
         password: formData.password,
         admissionNumber: formData.admissionNumber,
         dateOfBirth: formData.dateOfBirth,
@@ -55,35 +63,31 @@ export default function Register() {
         endpoint = '/auth/register/teacher';
         payload = {
           fullName: formData.fullName,
-          email: formData.email,
+          email: formData.email.trim(),
           password: formData.password,
           staffId: formData.staffId,
           dateOfBirth: formData.dateOfBirth,
         };
       }
 
-      const res = await API.post(endpoint, payload);
+      const res = await postAuthRequest(endpoint, payload, () => setError(SERVER_WAKING_MESSAGE));
+      setError('');
 
       if (res.data.success) {
+        if (roleType !== 'TEACHER') {
+          setSuccess('Account created. Sign in with your email, password and admission number.');
+          return;
+        }
+
         localStorage.setItem('token', res.data.token);
         localStorage.setItem('user', JSON.stringify(res.data.user));
 
-        if (roleType === 'STUDENT') {
-          navigate('/student');
-        } else if (roleType === 'TEACHER') {
-          navigate('/teacher');
-        } else {
-          navigate('/parent');
-        }
+        navigate('/teacher');
       }
     } catch (err) {
-      setError(
-        err.response?.data?.message ||
-        err.response?.data?.error ||
-        (roleType === 'TEACHER'
+      setError(getAuthErrorMessage(err, roleType === 'TEACHER'
           ? 'Registration failed. Please verify your Staff ID, Date of Birth, and pre-loaded Email with school administration.'
-          : 'Registration failed. Please verify your admission details with the administration.')
-      );
+          : 'Registration failed. Please verify your admission details with the administration.'));
     } finally {
       setLoading(false);
     }
@@ -152,6 +156,13 @@ export default function Register() {
             </div>
           )}
 
+          {success && (
+            <div className="mb-5 rounded-lg border border-emerald-800/80 bg-emerald-950/60 p-3.5 text-sm text-emerald-300" role="status">
+              {success}{' '}
+              <Link to="/login" className="font-semibold text-emerald-200 underline underline-offset-2">Sign in</Link>
+            </div>
+          )}
+
           <form className="space-y-4" onSubmit={handleSubmit}>
             <div>
               <label className="block text-xs font-semibold text-slate-300 mb-1">
@@ -194,44 +205,34 @@ export default function Register() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-300 mb-1">Password</label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
-                    <Lock className="h-4 w-4" />
-                  </div>
-                  <input
-                    type="password"
-                    name="password"
-                    value={formData.password}
-                    onChange={handleChange}
-                    required
-                    minLength={8}
-                    placeholder="Min 8 chars"
-                    className="w-full pl-10 pr-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-slate-500"
-                  />
-                </div>
+                <PasswordInput
+                  leadingIcon={<Lock className="h-4 w-4" />}
+                  name="password"
+                  value={formData.password}
+                  onChange={handleChange}
+                  required
+                  minLength={8}
+                  placeholder="Min 8 chars"
+                  className="w-full pl-10 pr-10 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-slate-500"
+                />
               </div>
 
               <div>
                 <label className="block text-xs font-semibold text-slate-300 mb-1">Confirm Password</label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
-                    <Lock className="h-4 w-4" />
-                  </div>
-                  <input
-                    type="password"
-                    name="confirmPassword"
-                    value={formData.confirmPassword}
-                    onChange={handleChange}
-                    required
-                    minLength={8}
-                    placeholder="Re-enter password"
-                    className={`w-full pl-10 pr-3 py-2 bg-slate-900 border rounded-lg text-white text-sm focus:outline-none focus:ring-2 placeholder-slate-500 ${
-                      formData.confirmPassword && formData.password !== formData.confirmPassword
-                        ? 'border-red-500 focus:ring-red-500'
-                        : 'border-slate-700 focus:ring-blue-500'
-                    }`}
-                  />
-                </div>
+                <PasswordInput
+                  leadingIcon={<Lock className="h-4 w-4" />}
+                  name="confirmPassword"
+                  value={formData.confirmPassword}
+                  onChange={handleChange}
+                  required
+                  minLength={8}
+                  placeholder="Re-enter password"
+                  className={`w-full pl-10 pr-10 py-2 bg-slate-900 border rounded-lg text-white text-sm focus:outline-none focus:ring-2 placeholder-slate-500 ${
+                    formData.confirmPassword && formData.password !== formData.confirmPassword
+                      ? 'border-red-500 focus:ring-red-500'
+                      : 'border-slate-700 focus:ring-blue-500'
+                  }`}
+                />
               </div>
             </div>
 
@@ -299,6 +300,7 @@ export default function Register() {
 
               {roleType === 'PARENT' && (
                 <div className="mt-3">
+                  <p className="mb-3 text-xs text-slate-400">Use the same email and password for all your children so they appear under one login.</p>
                   <label className="block text-xs font-semibold text-slate-300 mb-1">Relationship to Student</label>
                   <select
                     name="relationship"

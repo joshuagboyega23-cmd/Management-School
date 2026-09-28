@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { GraduationCap, LogOut, FileText, CheckCircle, AlertCircle, Users, BookOpen, Plus, Download, MessageSquareText } from 'lucide-react';
+import { GraduationCap, LogOut, FileText, CheckCircle, AlertCircle, Users, BookOpen, Plus, Download, MessageSquareText, Share2 } from 'lucide-react';
 import API from '../opi';
 import { downloadGradeSheetPDF } from '../utils/pdfUtils';
+import MaterialsManager from './MaterialsManager';
 
 const CLASS_OPTIONS = ['JSS1', 'JSS2', 'JSS3', 'SS1', 'SS2', 'SS3'];
 
@@ -268,6 +269,12 @@ export default function TeacherDashboard() {
             className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm transition ${activeTab === 'messages' ? 'bg-blue-600 text-white shadow' : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'}`}
           >
             <MessageSquareText className="h-4 w-4" /> Messages
+          </button>
+          <button
+            onClick={() => setActiveTab('materials')}
+            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm transition ${activeTab === 'materials' ? 'bg-blue-600 text-white shadow' : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'}`}
+          >
+            <Share2 className="h-4 w-4" /> Share Materials
           </button>
         </div>
 
@@ -565,6 +572,10 @@ export default function TeacherDashboard() {
             )}
           </div>
         </div>
+        )}
+
+        {activeTab === 'materials' && (
+          <MaterialsManager students={students} onNotify={showNotification} />
         )}
       </main>
     </div>

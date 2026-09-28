@@ -6,6 +6,8 @@ import Login from './components/Login';
 import TeacherLogin from './components/TeacherLogin';
 import AdminLogin from './components/AdminLogin';
 import Register from './components/Register';
+import ForgotPassword from './components/ForgotPassword';
+import ResetPassword from './components/ResetPassword';
 import PaymentVerify from './components/PaymentVerify';
 import ProtectedRoute from './components/ProtectedRoute';
 import AdminDashboard from './components/AdminDashboard';
@@ -23,6 +25,8 @@ export default function App() {
         <Route path="/teacher-login" element={<TeacherLogin />} />
         <Route path="/admin-login" element={<AdminLogin />} />
         <Route path="/register" element={<Register />} />
+        <Route path="/forgot-password" element={<ForgotPassword />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/payments/verify" element={<PaymentVerify />} />
 
         {/* Protected Role-Based Routes */}

@@ -5,6 +5,7 @@ import {
   ChevronRight, Star, Shield, Globe, Clock, ArrowRight, Menu, X,
   Award, Target, Heart
 } from 'lucide-react';
+import { wakeServer } from '../opi';
 
 // ─── School Configuration (PLACEHOLDERS) ──────────────────────────────────────
 // NOTE: Flagged placeholders below can be replaced with the real school's actual details.
@@ -128,6 +129,7 @@ function Navbar({ onEnterPortal }) {
   const [scrolled, setScrolled] = useState(false);
 
   useEffect(() => {
+    wakeServer();
     const onScroll = () => setScrolled(window.scrollY > 20);
     window.addEventListener('scroll', onScroll);
     return () => window.removeEventListener('scroll', onScroll);

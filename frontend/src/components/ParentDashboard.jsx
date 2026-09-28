@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { GraduationCap, LogOut, Users, FileText, CreditCard, Award, ChevronDown, ChevronUp, AlertCircle, Clock, RefreshCw } from 'lucide-react';
 import API from '../opi';
@@ -11,7 +11,17 @@ export default function ParentDashboard() {
   const [error, setError] = useState('');
   const [selectedChildId, setSelectedChildId] = useState(null);
   const [notification, setNotification] = useState({ type: '', text: '' });
-  const [paymentForm, setPaymentForm] = useState({ amount: '85000', term: 'First Term 2026' });
+  const currentYear = new Date().getFullYear();
+  const [paymentForm, setPaymentForm] = useState(() => {
+    let parentEmail = '';
+    try {
+      parentEmail = JSON.parse(localStorage.getItem('user') || '{}').email || '';
+    } catch (error) {
+      parentEmail = '';
+    }
+    return { amount: '', term: `First Term ${currentYear}`, email: parentEmail };
+  });
+  const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [paymentLoading, setPaymentLoading] = useState(false);
   const [verifyingRef, setVerifyingRef] = useState('');
   const [announcements, setAnnouncements] = useState([]);
@@ -141,20 +151,20 @@ export default function ParentDashboard() {
     }
   };
 
-  const handleChildPayment = async (child) => {
+  const handleChildPayment = async (event) => {
+    event.preventDefault();
+    if (!selectedChild || Number(paymentForm.amount) <= 0) return;
     try {
       setPaymentLoading(true);
-      const user = JSON.parse(localStorage.getItem('user') || '{}');
       const res = await API.post('/payments/initialize', {
-        studentId: child.id,
-        amount: parseFloat(paymentForm.amount),
-        email: user.email,
+        studentId: Number(selectedChild.id),
+        amount: Number(paymentForm.amount),
+        email: paymentForm.email.trim(),
         term: paymentForm.term
       });
 
       if (res.data.success && res.data.paymentUrl) {
         window.location.href = res.data.paymentUrl;
-        showNotification('success', 'Redirecting to Paystack checkout...');
       }
     } catch (err) {
       showNotification('error', err.response?.data?.error || 'Payment initialization failed');
@@ -444,17 +454,54 @@ export default function ParentDashboard() {
                   {/* Paystack quick pay */}
                   <div className="mt-6 pt-6 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-4 bg-slate-50 p-4 rounded-xl">
                     <div>
-                      <p className="font-semibold text-sm text-slate-800">Pay Tuition Fees for {selectedChild.full_name}</p>
-                      <p className="text-xs text-slate-500">Secure instant payment via Paystack</p>
+                      <p className="font-semibold text-sm text-slate-800">Tuition checkout</p>
+                      <p className="text-xs text-slate-500">Review payment details before continuing to Paystack.</p>
                     </div>
                     <button
-                      onClick={() => handleChildPayment(selectedChild)}
-                      disabled={paymentLoading}
+                      type="button"
+                      onClick={() => setCheckoutOpen((open) => !open)}
                       className="bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs px-5 py-2.5 rounded-lg transition shadow"
                     >
-                      {paymentLoading ? 'Processing...' : 'Make Payment'}
+                      {checkoutOpen ? 'Close Checkout' : 'Make Payment'}
                     </button>
                   </div>
+
+                  {checkoutOpen && (
+                    <form onSubmit={handleChildPayment} className="mt-4 space-y-4 rounded-xl border border-slate-200 bg-white p-5">
+                      <h4 className="text-base font-bold text-slate-800">Payment Checkout</h4>
+                      <div className="grid grid-cols-1 gap-3 rounded-lg bg-slate-50 p-4 text-sm sm:grid-cols-3">
+                        <div><p className="text-[11px] font-semibold text-slate-500">Student</p><p className="font-semibold text-slate-800">{selectedChild.full_name}</p></div>
+                        <div><p className="text-[11px] font-semibold text-slate-500">Admission Number</p><p className="font-mono text-slate-800">{selectedChild.admission_number}</p></div>
+                        <div><p className="text-[11px] font-semibold text-slate-500">Class</p><p className="text-slate-800">{selectedChild.class_name || 'Assigned Class'}</p></div>
+                      </div>
+                      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                        <div>
+                          <label className="mb-1 block text-xs font-semibold text-slate-600">Term</label>
+                          <select value={paymentForm.term} onChange={(e) => setPaymentForm({ ...paymentForm, term: e.target.value })} required className="w-full rounded-lg border border-slate-300 p-2.5 text-sm">
+                            {['First Term', 'Second Term', 'Third Term'].map((term) => <option key={term} value={`${term} ${currentYear}`}>{term} {currentYear}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-xs font-semibold text-slate-600">Amount (₦)</label>
+                          <input type="number" min="0.01" step="0.01" value={paymentForm.amount} onChange={(e) => setPaymentForm({ ...paymentForm, amount: e.target.value })} required className="w-full rounded-lg border border-slate-300 p-2.5 text-sm" />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs font-semibold text-slate-600">Paying email</label>
+                        <input type="email" value={paymentForm.email} onChange={(e) => setPaymentForm({ ...paymentForm, email: e.target.value })} required className="w-full rounded-lg border border-slate-300 p-2.5 text-sm" />
+                      </div>
+                      <div className="rounded-lg border border-blue-100 bg-blue-50 p-3 text-sm text-blue-900">
+                        You are paying ₦{Number(paymentForm.amount || 0).toLocaleString()} for {selectedChild.full_name} — {paymentForm.term}
+                      </div>
+                      <div className="text-xs text-slate-600">
+                        <p>Total confirmed payments: <strong>₦{(selectedChild.paymentHistory || []).filter((payment) => payment.status === 'SUCCESS').reduce((total, payment) => total + Number(payment.amount || 0), 0).toLocaleString()}</strong></p>
+                        <p>Pending payments: <strong>{(selectedChild.paymentHistory || []).filter((payment) => payment.status === 'PENDING').length}</strong></p>
+                      </div>
+                      <button type="submit" disabled={paymentLoading || Number(paymentForm.amount) <= 0} className="w-full rounded-lg bg-blue-600 px-4 py-3 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50">
+                        {paymentLoading ? 'Connecting to Paystack...' : 'Pay via Paystack'}
+                      </button>
+                    </form>
+                  )}
                 </div>
               </div>
             )}

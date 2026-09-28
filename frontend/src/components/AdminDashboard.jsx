@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { Users, UserCheck, FileText, CreditCard, CheckCircle, GraduationCap, ArrowLeft, LogOut, Menu, X, Clock, RefreshCw, Bell, MessageSquareText } from 'lucide-react';
+import { Users, UserCheck, FileText, CreditCard, CheckCircle, GraduationCap, ArrowLeft, LogOut, Menu, X, Clock, RefreshCw, Bell, MessageSquareText, KeyRound, Share2 } from 'lucide-react';
 
 import StudentsModule from './StudentsModule';
 import StaffModule from './StaffModule';
@@ -9,6 +9,8 @@ import PaymentsModule from './PaymentsModule';
 import PayrollModule from './PayrollModule';
 import API from '../opi';
 import { formatDateTime } from '../utils/pdfUtils';
+import PasswordInput from './PasswordInput';
+import MaterialsManager from './MaterialsManager';
 
 export default function AdminDashboard() {
   const navigate = useNavigate();
@@ -16,7 +18,6 @@ export default function AdminDashboard() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [students, setStudents] = useState([]);
   const [teachers, setTeachers] = useState([]);
-  const [parents, setParents] = useState([]);
   const [loading, setLoading] = useState(false);
   const [loadingStaff, setLoadingStaff] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
@@ -35,9 +36,14 @@ export default function AdminDashboard() {
   const [selectedConversationId, setSelectedConversationId] = useState('');
   const [conversationThread, setConversationThread] = useState([]);
   const [replyText, setReplyText] = useState('');
+  const [userSearch, setUserSearch] = useState('');
+  const [userSearchResults, setUserSearchResults] = useState([]);
+  const [selectedResetUser, setSelectedResetUser] = useState(null);
+  const [resetPassword, setResetPassword] = useState('');
+  const [confirmResetPassword, setConfirmResetPassword] = useState('');
+  const [issuedPassword, setIssuedPassword] = useState('');
   const [newMessageForm, setNewMessageForm] = useState({
     target_role: 'PARENT',
-    target_user_id: '',
     subject: '',
     body: ''
   });
@@ -69,15 +75,6 @@ export default function AdminDashboard() {
       setTeachers([]);
     } finally {
       setLoadingStaff(false);
-    }
-  };
-
-  const fetchParents = async () => {
-    try {
-      const res = await API.get('/parents');
-      setParents(Array.isArray(res.data?.data) ? res.data.data : []);
-    } catch (err) {
-      setParents([]);
     }
   };
 
@@ -135,7 +132,6 @@ export default function AdminDashboard() {
   useEffect(() => {
     fetchStudents();
     fetchTeachers();
-    fetchParents();
     fetchPendingPayments();
     fetchConversations();
   }, []);
@@ -145,6 +141,29 @@ export default function AdminDashboard() {
       fetchConversationThread(selectedConversationId);
     }
   }, [selectedConversationId]);
+
+  useEffect(() => {
+    const query = userSearch.trim();
+    if (!query) {
+      setUserSearchResults([]);
+      return undefined;
+    }
+
+    let active = true;
+    const timeoutId = setTimeout(async () => {
+      try {
+        const res = await API.get('/admin/users', { params: { query } });
+        if (active) setUserSearchResults(Array.isArray(res.data?.data) ? res.data.data : []);
+      } catch (err) {
+        if (active) setUserSearchResults([]);
+      }
+    }, 250);
+
+    return () => {
+      active = false;
+      clearTimeout(timeoutId);
+    };
+  }, [userSearch]);
 
   const showNotification = (type, text) => {
     setMessage({ type, text });
@@ -279,24 +298,53 @@ export default function AdminDashboard() {
     try {
       const res = await API.post('/conversations', {
         target_role: newMessageForm.target_role,
-        target_user_id: Number(newMessageForm.target_user_id),
         subject: newMessageForm.subject,
         body: newMessageForm.body
       });
       if (res.data.success) {
-        showNotification('success', 'Message sent successfully.');
+        const count = Number(res.data.threadsCreated || 0);
+        showNotification('success', `Message sent in ${count} private thread${count === 1 ? '' : 's'}.`);
         setNewMessageForm({
           target_role: newMessageForm.target_role,
-          target_user_id: '',
           subject: '',
           body: ''
         });
-        setSelectedConversationId(String(res.data.data.id));
         fetchConversations();
       }
     } catch (err) {
       showNotification('error', err.response?.data?.message || 'Failed to send message');
     }
+  };
+
+  const handleAdminPasswordReset = async (e) => {
+    e.preventDefault();
+    if (!selectedResetUser) return;
+    if (resetPassword !== confirmResetPassword) {
+      showNotification('error', 'Passwords do not match.');
+      return;
+    }
+
+    try {
+      await API.post('/admin/reset-user-password', {
+        userId: selectedResetUser.id,
+        newPassword: resetPassword
+      });
+      setIssuedPassword(resetPassword);
+      setResetPassword('');
+      setConfirmResetPassword('');
+      showNotification('success', 'Password reset. Copy the temporary password now; it is shown only once.');
+    } catch (err) {
+      showNotification('error', err.response?.data?.message || 'Could not reset user password.');
+    }
+  };
+
+  const generateAdminPassword = () => {
+    const bytes = new Uint8Array(18);
+    window.crypto.getRandomValues(bytes);
+    const generatedPassword = Array.from(bytes, (byte) => byte.toString(36).padStart(2, '0')).join('').slice(0, 24);
+    setResetPassword(generatedPassword);
+    setConfirmResetPassword(generatedPassword);
+    setIssuedPassword('');
   };
 
   return (
@@ -366,6 +414,18 @@ export default function AdminDashboard() {
             className={`flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition ${activeTab === 'messages' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-slate-800'}`}
           >
             <MessageSquareText className="h-5 w-5" /> Messages
+          </button>
+          <button
+            onClick={() => handleTabSelect('materials')}
+            className={`flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition ${activeTab === 'materials' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-slate-800'}`}
+          >
+            <Share2 className="h-5 w-5" /> Share Materials
+          </button>
+          <button
+            onClick={() => handleTabSelect('password-reset')}
+            className={`flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition ${activeTab === 'password-reset' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-slate-800'}`}
+          >
+            <KeyRound className="h-5 w-5" /> Reset User Password
           </button>
           <button 
             onClick={() => handleTabSelect('payroll')}
@@ -542,6 +602,78 @@ export default function AdminDashboard() {
           />
         )}
 
+        {activeTab === 'password-reset' && (
+          <div className="max-w-2xl rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
+            <h3 className="mb-4 text-lg font-bold text-slate-800">Reset User Password</h3>
+            <label className="mb-1 block text-xs font-semibold text-slate-600">Search by name, email, or admission number</label>
+            <input
+              type="search"
+              value={userSearch}
+              onChange={(e) => setUserSearch(e.target.value)}
+              className="mb-3 w-full rounded-lg border border-slate-300 p-2.5 text-sm"
+              placeholder="Start typing to find a user"
+            />
+            {userSearchResults.length > 0 && (
+              <div className="mb-5 max-h-48 overflow-y-auto divide-y divide-slate-100 rounded-lg border border-slate-200">
+                {userSearchResults.map((user) => (
+                  <button
+                    key={user.id}
+                    type="button"
+                    onClick={() => {
+                      setSelectedResetUser(user);
+                      setIssuedPassword('');
+                    }}
+                    className={`block w-full px-3 py-2 text-left text-sm hover:bg-slate-50 ${selectedResetUser?.id === user.id ? 'bg-blue-50' : ''}`}
+                  >
+                    <span className="font-semibold text-slate-800">{user.full_name}</span>
+                    <span className="ml-2 text-slate-500">{user.email} · {user.role}{user.admission_number ? ` · ${user.admission_number}` : ''}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            {selectedResetUser && (
+              <form onSubmit={handleAdminPasswordReset} className="space-y-3 border-t border-slate-200 pt-4">
+                <p className="text-sm text-slate-700">Selected: <strong>{selectedResetUser.full_name}</strong> ({selectedResetUser.role})</p>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">New password</label>
+                  <PasswordInput
+                    value={resetPassword}
+                    onChange={(e) => setResetPassword(e.target.value)}
+                    minLength={8}
+                    required
+                    className="w-full rounded-lg border border-slate-300 p-2.5 pr-10 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">Confirm password</label>
+                  <PasswordInput
+                    value={confirmResetPassword}
+                    onChange={(e) => setConfirmResetPassword(e.target.value)}
+                    minLength={8}
+                    required
+                    className="w-full rounded-lg border border-slate-300 p-2.5 pr-10 text-sm"
+                  />
+                </div>
+                <div className="flex flex-wrap gap-3">
+                  <button type="button" onClick={generateAdminPassword} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">Generate password</button>
+                  <button type="submit" className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700">Reset password</button>
+                </div>
+              </form>
+            )}
+            {issuedPassword && (
+              <div className="mt-5 rounded-lg border border-emerald-200 bg-emerald-50 p-4" role="status">
+                <p className="text-xs font-semibold text-emerald-800">Temporary password (shown once)</p>
+                <code className="mt-2 block break-all text-sm text-emerald-950">{issuedPassword}</code>
+                <button type="button" onClick={() => setIssuedPassword('')} className="mt-3 text-xs font-semibold text-emerald-800 underline">Hide password</button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'materials' && (
+          <MaterialsManager students={students} onNotify={showNotification} />
+        )}
+
         {activeTab === 'messages' && (
           <div className="grid grid-cols-1 xl:grid-cols-[0.95fr_1.25fr] gap-6">
             <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
@@ -552,27 +684,14 @@ export default function AdminDashboard() {
                   <label className="block text-xs font-semibold text-slate-600 mb-1">Recipient Type</label>
                   <select
                     value={newMessageForm.target_role}
-                    onChange={(e) => setNewMessageForm({ ...newMessageForm, target_role: e.target.value, target_user_id: '' })}
+                    onChange={(e) => setNewMessageForm({ ...newMessageForm, target_role: e.target.value })}
                     className="w-full p-2.5 border border-slate-300 rounded-lg text-sm"
                   >
                     <option value="PARENT">Parent</option>
                     <option value="TEACHER">Teacher</option>
                   </select>
                 </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Recipient</label>
-                  <select
-                    value={newMessageForm.target_user_id}
-                    onChange={(e) => setNewMessageForm({ ...newMessageForm, target_user_id: e.target.value })}
-                    className="w-full p-2.5 border border-slate-300 rounded-lg text-sm"
-                    required
-                  >
-                    <option value="">Select {newMessageForm.target_role.toLowerCase()}</option>
-                    {newMessageForm.target_role === 'PARENT'
-                      ? parents.map((parent) => <option key={parent.id} value={parent.id}>{parent.full_name} ({parent.email})</option>)
-                      : teachers.filter((teacher) => teacher.is_registered && teacher.id).map((teacher) => <option key={teacher.id} value={teacher.id}>{teacher.full_name} ({teacher.email})</option>)}
-                  </select>
-                </div>
+                <p className="text-xs text-slate-500">Sends a private message to every registered {newMessageForm.target_role.toLowerCase()}.</p>
                 <div>
                   <label className="block text-xs font-semibold text-slate-600 mb-1">Subject</label>
                   <input

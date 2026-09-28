@@ -1,12 +1,13 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { ExternalLink } from 'lucide-react';
 
 export default function PaymentsModule({ students, onProcessPayment }) {
+  const currentYear = new Date().getFullYear();
   const [paymentForm, setPaymentForm] = useState({
     studentId: '',
     email: '',
     amount: '',
-    term: 'First Term 2026'
+    term: `First Term ${currentYear}`
   });
 
   const studentList = Array.isArray(students) ? students : [];
@@ -67,13 +68,16 @@ export default function PaymentsModule({ students, onProcessPayment }) {
           </div>
           <div>
             <label className="block text-xs font-semibold text-gray-600 mb-1">Term</label>
-            <input 
-              type="text" 
-              value={paymentForm.term} 
+            <select
+              value={paymentForm.term}
               onChange={(e) => setPaymentForm({ ...paymentForm, term: e.target.value })}
-              required 
-              className="w-full p-2.5 border border-gray-300 rounded-lg text-sm"
-            />
+              required
+              className="w-full p-2.5 border border-gray-300 rounded-lg text-sm bg-white"
+            >
+              {['First Term', 'Second Term', 'Third Term'].map((term) => (
+                <option key={term} value={`${term} ${currentYear}`}>{term} {currentYear}</option>
+              ))}
+            </select>
           </div>
         </div>
 
