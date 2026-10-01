@@ -114,6 +114,99 @@ function calculateGradeAndRemark(totalScore) {
   return { grade: 'F', remark: 'Fail - Needs Improvement' };
 }
 
+function toCsv(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return '';
+  const headers = Object.keys(rows[0]);
+  const escapeValue = (value) => {
+    if (value === null || value === undefined) return '';
+    const stringValue = String(value).replace(/\r?\n/g, ' ');
+    return `"${stringValue.replace(/"/g, '""')}"`;
+  };
+  const lines = [headers.map((header) => escapeValue(header)).join(',')];
+  rows.forEach((row) => {
+    lines.push(headers.map((header) => escapeValue(row[header])).join(','));
+  });
+  return lines.join('\n');
+}
+
+async function logActivity({ db = pool, actorId, actorName, actorRole, action, targetDescription }) {
+  if (!actorId || !actorRole || !action) return;
+  try {
+    await db.query(
+      `INSERT INTO activity_log (actor_id, actor_name, actor_role, action, target_description)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [actorId, actorName || 'School system', actorRole, action, targetDescription || '']
+    );
+  } catch (error) {
+    console.error('Activity log failed:', error.message);
+  }
+}
+
+async function ensureSchoolSchema() {
+  try {
+    await pool.query(`
+      ALTER TABLE students ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS activity_log (
+        id SERIAL PRIMARY KEY,
+        actor_id INT REFERENCES users(id) ON DELETE SET NULL,
+        actor_name VARCHAR(255),
+        actor_role VARCHAR(50),
+        action VARCHAR(50),
+        target_description TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    const duplicateRows = await pool.query(`
+      WITH ranked AS (
+        SELECT id,
+               ROW_NUMBER() OVER (
+                 PARTITION BY student_id, term, subject
+                 ORDER BY created_at ASC, id ASC
+               ) AS row_number
+        FROM report_cards
+      )
+      SELECT r.id, s.full_name AS student_name, r.student_id, r.subject, r.term,
+             r.ca_score, r.exam_score, r.total_score
+      FROM report_cards r
+      JOIN students s ON s.id = r.student_id
+      JOIN ranked rr ON rr.id = r.id
+      WHERE rr.row_number > 1
+      ORDER BY s.full_name, r.subject, r.term, r.created_at
+    `);
+
+    if (duplicateRows.rows.length > 0) {
+      await pool.query(`
+        WITH ranked AS (
+          SELECT id,
+                 ROW_NUMBER() OVER (
+                   PARTITION BY student_id, term, subject
+                   ORDER BY created_at ASC, id ASC
+                 ) AS row_number
+          FROM report_cards
+        )
+        DELETE FROM report_cards
+        WHERE id IN (
+          SELECT id FROM ranked WHERE row_number > 1
+        )
+      `);
+      console.log('Removed duplicate report card rows before enforcing uniqueness:', duplicateRows.rows);
+    }
+
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS report_cards_student_term_subject_unique
+      ON report_cards (student_id, term, subject)
+    `);
+  } catch (error) {
+    console.error('Schema setup failed:', error.message);
+  }
+}
+
+ensureSchoolSchema();
+
 // Middleware: Authenticate JWT Token & Establish PostgreSQL Row-Level Security (RLS) Context
 const verifyToken = async (req, res, next) => {
   const authHeader = req.headers.authorization;
@@ -287,6 +380,19 @@ const schemas = {
     examScore: z.number().min(0).max(60, 'Exam score must be between 0 and 60')
   }),
 
+  bulkGradeSubmit: z.object({
+    classId: z.number().int().positive('classId must be a positive integer'),
+    subject: z.string().min(2, 'Subject name is required'),
+    term: z.enum(['First Term', 'Second Term', 'Third Term'], {
+      error: "Term must be 'First Term', 'Second Term', or 'Third Term'"
+    }),
+    entries: z.array(z.object({
+      studentId: z.number().int().positive('studentId must be a positive integer'),
+      caScore: z.coerce.number().min(0).max(40, 'CA score must be between 0 and 40'),
+      examScore: z.coerce.number().min(0).max(60, 'Exam score must be between 0 and 60')
+    })).min(1, 'At least one student entry is required')
+  }),
+
   paymentInit: z.object({
     studentId: z.number().int().positive('studentId must be a positive integer'),
     amount: z.number().positive('Amount must be a positive number'),
@@ -364,6 +470,15 @@ app.post('/api/auth/register', verifyToken, requireRole('ADMIN', 'SUPERADMIN'), 
        RETURNING id, full_name, email, role, created_at`,
       [full_name, email.trim().toLowerCase(), hashedPassword]
     );
+
+    await logActivity({
+      db: client,
+      actorId: req.user.id,
+      actorName: req.user.email || 'Administrator',
+      actorRole: req.user.role,
+      action: 'Admin',
+      targetDescription: `Created admin account for ${newUser.rows[0].full_name} (${newUser.rows[0].email})`
+    });
 
     await client.query('COMMIT');
 
@@ -1155,6 +1270,7 @@ app.post('/api/auth/reset-password', async (req, res) => {
 
 app.get('/api/students', verifyToken, requireRole('ADMIN', 'SUPERADMIN', 'TEACHER'), async (req, res) => {
   try {
+    const isAdminRole = ['ADMIN', 'SUPERADMIN'].includes(req.user.role);
     const students = await req.db.query(
       `SELECT s.id, s.class_id, c.level AS class_level, s.admission_number AS admission_no, 
               COALESCE(u.full_name, s.full_name) AS name, 
@@ -1163,10 +1279,12 @@ app.get('/api/students', verifyToken, requireRole('ADMIN', 'SUPERADMIN', 'TEACHE
               s.date_of_birth,
               s.guardian_phone, 
               s.user_id,
+              s.is_active,
               s.created_at 
        FROM students s 
        LEFT JOIN users u ON s.user_id = u.id 
        LEFT JOIN classes c ON s.class_id = c.id
+       ${isAdminRole ? '' : 'WHERE s.is_active IS NOT FALSE'}
        ORDER BY s.id DESC`
     );
     res.json({ success: true, data: students.rows });
@@ -1426,7 +1544,7 @@ app.post('/api/admin/reset-user-password', verifyToken, requireRole('ADMIN', 'SU
 
     const passwordHash = await bcrypt.hash(newPassword, 10);
     const result = await req.db.query(
-      'UPDATE users SET password_hash = $1 WHERE id = $2 RETURNING id',
+      'UPDATE users SET password_hash = $1 WHERE id = $2 RETURNING id, full_name, email, role',
       [passwordHash, userId]
     );
     if (result.rows.length === 0) {
@@ -1437,9 +1555,204 @@ app.post('/api/admin/reset-user-password', verifyToken, requireRole('ADMIN', 'SU
       'UPDATE password_resets SET used_at = NOW() WHERE user_id = $1 AND used_at IS NULL',
       [userId]
     );
+
+    const user = result.rows[0];
+    await logActivity({
+      db: req.db,
+      actorId: req.user.id,
+      actorName: req.user.email || 'Administrator',
+      actorRole: req.user.role,
+      action: 'Passwords',
+      targetDescription: `Password reset for ${user.full_name} (${user.role})`
+    });
+
     res.json({ success: true, message: 'User password reset successfully.' });
   } catch (error) {
     res.status(500).json({ success: false, message: 'Could not reset user password.' });
+  }
+});
+
+app.get('/api/admin/export/students', verifyToken, requireRole('ADMIN', 'SUPERADMIN'), async (req, res) => {
+  try {
+    const rows = await req.db.query(`
+      SELECT s.full_name,
+             s.admission_number,
+             s.date_of_birth,
+             c.name AS class_name,
+             COALESCE(u.email, '') AS registered_email,
+             COALESCE(
+               (
+                 SELECT string_agg(DISTINCT p.full_name || ' <' || p.email || '>', '; ' ORDER BY p.full_name)
+                 FROM parent_student_links psl
+                 JOIN users p ON p.id = psl.parent_user_id
+                 WHERE psl.student_id = s.id
+               ),
+               ''
+             ) AS parent_details
+      FROM students s
+      LEFT JOIN classes c ON c.id = s.class_id
+      LEFT JOIN users u ON u.id = s.user_id
+      ORDER BY s.full_name ASC
+    `);
+    const csv = toCsv(rows.rows.map((row) => ({
+      full_name: row.full_name,
+      admission_number: row.admission_number,
+      date_of_birth: row.date_of_birth,
+      class_name: row.class_name,
+      email_if_registered: row.registered_email,
+      parent_name_and_email: row.parent_details
+    })));
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="students-export.csv"');
+    res.send(csv);
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+app.get('/api/admin/export/grades', verifyToken, requireRole('ADMIN', 'SUPERADMIN'), async (req, res) => {
+  try {
+    const rows = await req.db.query(`
+      SELECT s.full_name AS student_name,
+             s.admission_number,
+             c.name AS class_name,
+             rc.term,
+             rc.subject,
+             rc.ca_score,
+             rc.exam_score,
+             rc.total_score,
+             rc.grade
+      FROM report_cards rc
+      JOIN students s ON s.id = rc.student_id
+      LEFT JOIN classes c ON c.id = s.class_id
+      ORDER BY rc.created_at DESC
+    `);
+    const csv = toCsv(rows.rows);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="grades-export.csv"');
+    res.send(csv);
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+app.get('/api/admin/export/payments', verifyToken, requireRole('ADMIN', 'SUPERADMIN'), async (req, res) => {
+  try {
+    const rows = await req.db.query(`
+      SELECT s.full_name AS student_name,
+             s.admission_number,
+             fp.term,
+             fp.amount,
+             fp.status,
+             fp.reference,
+             fp.created_at
+      FROM fee_payments fp
+      JOIN students s ON s.id = fp.student_id
+      ORDER BY fp.created_at DESC
+    `);
+    const csv = toCsv(rows.rows.map((row) => ({
+      student_name: row.student_name,
+      admission_number: row.admission_number,
+      term: row.term,
+      amount: row.amount,
+      status: row.status,
+      reference: row.reference,
+      date_and_time: row.created_at
+    })));
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="payments-export.csv"');
+    res.send(csv);
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+app.get('/api/admin/activity-log', verifyToken, requireRole('ADMIN', 'SUPERADMIN'), async (req, res) => {
+  try {
+    const page = Math.max(1, Number(req.query.page || 1));
+    const limit = Math.min(Math.max(1, Number(req.query.limit || 25)), 100);
+    const offset = (page - 1) * limit;
+    const total = await req.db.query('SELECT COUNT(*)::int AS total FROM activity_log');
+    const rows = await req.db.query(
+      `SELECT actor_name, actor_role, action, target_description, created_at
+       FROM activity_log
+       ORDER BY created_at DESC
+       LIMIT $1 OFFSET $2`,
+      [limit, offset]
+    );
+    res.json({
+      success: true,
+      data: rows.rows,
+      pagination: {
+        page,
+        limit,
+        total: total.rows[0].total,
+        totalPages: Math.max(1, Math.ceil(total.rows[0].total / limit))
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+app.post('/api/admin/promote-class', verifyToken, requireRole('ADMIN', 'SUPERADMIN'), async (req, res) => {
+  try {
+    const { fromClassId, toClassId } = req.body;
+    if (!fromClassId) {
+      return res.status(400).json({ success: false, message: 'The source class is required.' });
+    }
+
+    const sourceClassId = Number(fromClassId);
+    const destinationClassId = toClassId ? Number(toClassId) : null;
+    if (destinationClassId && destinationClassId === sourceClassId) {
+      return res.status(400).json({ success: false, message: 'Choose a different destination class.' });
+    }
+
+    const classCheck = destinationClassId ? await req.db.query('SELECT id FROM classes WHERE id = $1', [destinationClassId]) : { rows: [] };
+    if (destinationClassId && classCheck.rows.length === 0) {
+      return res.status(400).json({ success: false, message: 'Destination class not found.' });
+    }
+
+    const studentRows = await req.db.query(
+      'SELECT id, full_name FROM students WHERE class_id = $1 AND (is_active IS NOT FALSE)',
+      [sourceClassId]
+    );
+
+    let movedCount = 0;
+    if (destinationClassId) {
+      const update = await req.db.query(
+        'UPDATE students SET class_id = $1 WHERE class_id = $2 AND is_active IS NOT FALSE RETURNING id',
+        [destinationClassId, sourceClassId]
+      );
+      movedCount = update.rowCount || update.rows.length;
+    } else {
+      const update = await req.db.query(
+        'UPDATE students SET is_active = FALSE WHERE class_id = $1 AND is_active IS NOT FALSE RETURNING id',
+        [sourceClassId]
+      );
+      movedCount = update.rowCount || update.rows.length;
+    }
+
+    await logActivity({
+      db: req.db,
+      actorId: req.user.id,
+      actorName: req.user.email || 'Administrator',
+      actorRole: req.user.role,
+      action: 'Promotions',
+      targetDescription: destinationClassId
+        ? `Promoted ${movedCount} students from class ${sourceClassId} to class ${destinationClassId}`
+        : `Promoted ${movedCount} students from class ${sourceClassId} to inactive/graduated`
+    });
+
+    res.json({
+      success: true,
+      message: destinationClassId
+        ? `Promoted ${movedCount} students to the selected class.`
+        : `Marked ${movedCount} students inactive as graduates or leavers.`,
+      movedCount
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
   }
 });
 
@@ -1517,8 +1830,8 @@ app.post('/api/students', verifyToken, requireRole('ADMIN', 'SUPERADMIN'), async
 app.post('/api/report-cards', verifyToken, requireRole('TEACHER', 'ADMIN', 'SUPERADMIN'), validate(schemas.gradeSubmit), async (req, res) => {
   const { studentId, term, subject, caScore, examScore } = req.body;
 
-  const ca = parseFloat(caScore) || 0;
-  const exam = parseFloat(examScore) || 0;
+  const ca = Number(caScore) || 0;
+  const exam = Number(examScore) || 0;
 
   if (ca > 40 || exam > 60) {
     return res.status(400).json({
@@ -1527,16 +1840,44 @@ app.post('/api/report-cards', verifyToken, requireRole('TEACHER', 'ADMIN', 'SUPE
     });
   }
 
-  const totalScore = ca + exam;
-  const { grade, remark } = calculateGradeAndRemark(totalScore);
-
   try {
+    const studentCheck = await (req.db || pool).query(
+      'SELECT id, full_name FROM students WHERE id = $1 AND (is_active IS NOT FALSE)',
+      [studentId]
+    );
+    if (studentCheck.rows.length === 0) {
+      return res.status(400).json({ success: false, message: 'Student not found or inactive.' });
+    }
+
+    const duplicate = await (req.db || pool).query(
+      'SELECT id FROM report_cards WHERE student_id = $1 AND term = $2 AND subject = $3',
+      [studentId, term, subject]
+    );
+    if (duplicate.rows.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'This subject has already been recorded for this term. Use the edit option to make changes.'
+      });
+    }
+
+    const totalScore = ca + exam;
+    const { grade, remark } = calculateGradeAndRemark(totalScore);
     const reportCard = await (req.db || pool).query(
       `INSERT INTO report_cards (student_id, term, subject, ca_score, exam_score, total_score, grade)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
       [studentId, term, subject, ca, exam, totalScore, grade]
     );
+
+    const targetDescription = `${subject} — ${term} — ${studentCheck.rows[0].full_name}`;
+    await logActivity({
+      db: req.db || pool,
+      actorId: req.user.id,
+      actorName: req.user.email || 'Teacher',
+      actorRole: req.user.role,
+      action: 'Grades',
+      targetDescription
+    });
 
     res.status(201).json({
       success: true,
@@ -1545,6 +1886,141 @@ app.post('/api/report-cards', verifyToken, requireRole('TEACHER', 'ADMIN', 'SUPE
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/report-cards/bulk', verifyToken, requireRole('TEACHER', 'ADMIN', 'SUPERADMIN'), validate(schemas.bulkGradeSubmit), async (req, res) => {
+  try {
+    const { classId, subject, term, entries } = req.body;
+    const students = await (req.db || pool).query(
+      'SELECT id, full_name FROM students WHERE class_id = $1 AND is_active IS NOT FALSE ORDER BY full_name ASC',
+      [classId]
+    );
+    const studentMap = new Map(students.rows.map((student) => [String(student.id), student.full_name]));
+    const saved = [];
+    const skipped = [];
+
+    for (const entry of entries) {
+      const studentId = Number(entry.studentId);
+      const ca = Number(entry.caScore || 0);
+      const exam = Number(entry.examScore || 0);
+      if (!studentMap.has(String(studentId))) {
+        skipped.push({ studentId, reason: 'Student not in selected class or inactive.' });
+        continue;
+      }
+      const existing = await (req.db || pool).query(
+        'SELECT id FROM report_cards WHERE student_id = $1 AND term = $2 AND subject = $3',
+        [studentId, term, subject]
+      );
+      if (existing.rows.length > 0) {
+        skipped.push({ studentId, full_name: studentMap.get(String(studentId)), reason: 'Already recorded' });
+        continue;
+      }
+      const totalScore = ca + exam;
+      const { grade } = calculateGradeAndRemark(totalScore);
+      const reportCard = await (req.db || pool).query(
+        `INSERT INTO report_cards (student_id, term, subject, ca_score, exam_score, total_score, grade)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING *`,
+        [studentId, term, subject, ca, exam, totalScore, grade]
+      );
+      saved.push({ ...reportCard.rows[0], full_name: studentMap.get(String(studentId)) });
+    }
+
+    if (saved.length > 0) {
+      await logActivity({
+        db: req.db || pool,
+        actorId: req.user.id,
+        actorName: req.user.email || 'Teacher',
+        actorRole: req.user.role,
+        action: 'Grades',
+        targetDescription: `${subject} — ${term} — ${saved.length} saved entries`
+      });
+    }
+
+    res.json({
+      success: true,
+      summary: {
+        saved: saved.length,
+        skipped: skipped.length,
+        skippedStudents: skipped.map((item) => item.full_name || item.studentId)
+      },
+      data: { saved, skipped }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+app.patch('/api/report-cards/:id', verifyToken, requireRole('TEACHER', 'ADMIN', 'SUPERADMIN'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const record = await (req.db || pool).query('SELECT * FROM report_cards WHERE id = $1', [Number(id)]);
+    if (record.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Report card entry not found.' });
+    }
+
+    const existing = record.rows[0];
+    const student = await (req.db || pool).query('SELECT full_name FROM students WHERE id = $1', [existing.student_id]);
+    const nextCa = Number(req.body.caScore ?? existing.ca_score);
+    const nextExam = Number(req.body.examScore ?? existing.exam_score);
+
+    if (nextCa > 40 || nextExam > 60) {
+      return res.status(400).json({
+        success: false,
+        message: 'Continuous Assessment (CA) cannot exceed 40 and Exam score cannot exceed 60'
+      });
+    }
+
+    const totalScore = nextCa + nextExam;
+    const { grade } = calculateGradeAndRemark(totalScore);
+
+    const updated = await (req.db || pool).query(
+      `UPDATE report_cards
+       SET ca_score = $1, exam_score = $2, total_score = $3, grade = $4
+       WHERE id = $5
+       RETURNING *`,
+      [nextCa, nextExam, totalScore, grade, Number(id)]
+    );
+
+    await logActivity({
+      db: req.db || pool,
+      actorId: req.user.id,
+      actorName: req.user.email || 'Teacher',
+      actorRole: req.user.role,
+      action: 'Grades',
+      targetDescription: `${existing.subject} — ${existing.term} — ${student.rows[0]?.full_name || existing.student_id}`
+    });
+
+    res.json({ success: true, message: 'Grade updated successfully.', data: updated.rows[0] });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+app.delete('/api/report-cards/:id', verifyToken, requireRole('TEACHER', 'ADMIN', 'SUPERADMIN'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const existing = await (req.db || pool).query('SELECT * FROM report_cards WHERE id = $1', [Number(id)]);
+    if (existing.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Report card entry not found.' });
+    }
+
+    const student = await (req.db || pool).query('SELECT full_name FROM students WHERE id = $1', [existing.rows[0].student_id]);
+    await (req.db || pool).query('DELETE FROM report_cards WHERE id = $1', [Number(id)]);
+
+    await logActivity({
+      db: req.db || pool,
+      actorId: req.user.id,
+      actorName: req.user.email || 'Teacher',
+      actorRole: req.user.role,
+      action: 'Grades',
+      targetDescription: `${existing.rows[0].subject} — ${existing.rows[0].term} — ${student.rows[0]?.full_name || existing.rows[0].student_id}`
+    });
+
+    res.json({ success: true, message: 'Grade removed successfully.' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
   }
 });
 

@@ -35,6 +35,12 @@ export default function TeacherDashboard() {
     caScore: '',
     examScore: ''
   });
+  const [bulkGradeClass, setBulkGradeClass] = useState('');
+  const [bulkGradeSubject, setBulkGradeSubject] = useState('Mathematics');
+  const [bulkGradeTerm, setBulkGradeTerm] = useState('First Term');
+  const [bulkGradeRows, setBulkGradeRows] = useState([]);
+  const [bulkGradeSummary, setBulkGradeSummary] = useState(null);
+  const [bulkGradeLoading, setBulkGradeLoading] = useState(false);
 
   const fetchStudents = async () => {
     try {
@@ -140,6 +146,75 @@ export default function TeacherDashboard() {
     setSelectedStudentId(studentId);
     fetchStudentReport(studentId);
   };
+
+  const loadBulkGradeRows = async (classId, subject, term) => {
+    if (!classId || !subject || !term) {
+      setBulkGradeRows([]);
+      return;
+    }
+    setBulkGradeLoading(true);
+    try {
+      const classStudents = filterStudentsByClass(students, classId);
+      const rows = await Promise.all(classStudents.map(async (student) => {
+        try {
+          const res = await API.get(`/report-cards/student/${student.id}`);
+          const existing = (Array.isArray(res.data?.data) ? res.data.data : []).find(
+            (record) => record.subject === subject && record.term === term
+          );
+          return {
+            studentId: student.id,
+            studentName: student.name,
+            caScore: existing ? String(existing.ca_score ?? '') : '',
+            examScore: existing ? String(existing.exam_score ?? '') : '',
+            existing: existing || null
+          };
+        } catch (error) {
+          return { studentId: student.id, studentName: student.name, caScore: '', examScore: '', existing: null };
+        }
+      }));
+      setBulkGradeRows(rows);
+    } finally {
+      setBulkGradeLoading(false);
+    }
+  };
+
+  const handleBulkGradeSave = async () => {
+    if (!bulkGradeClass || !bulkGradeSubject || !bulkGradeTerm) return;
+    const entries = bulkGradeRows
+      .filter((row) => !row.existing)
+      .map((row) => ({
+        studentId: Number(row.studentId),
+        caScore: Number(row.caScore || 0),
+        examScore: Number(row.examScore || 0)
+      }));
+
+    if (entries.length === 0) {
+      setBulkGradeSummary({ saved: 0, skipped: bulkGradeRows.length, skippedStudents: bulkGradeRows.map((row) => row.studentName) });
+      return;
+    }
+
+    try {
+      const res = await API.post('/report-cards/bulk', {
+        classId: Number(bulkGradeClass),
+        subject: bulkGradeSubject,
+        term: bulkGradeTerm,
+        entries
+      });
+      setBulkGradeSummary(res.data?.summary || { saved: 0, skipped: 0, skippedStudents: [] });
+      await loadBulkGradeRows(bulkGradeClass, bulkGradeSubject, bulkGradeTerm);
+      if (selectedStudentId) fetchStudentReport(selectedStudentId);
+    } catch (error) {
+      setBulkGradeSummary({ saved: 0, skipped: 0, skippedStudents: [], error: error.response?.data?.message || 'Could not save the grade sheet.' });
+    }
+  };
+
+  useEffect(() => {
+    if (bulkGradeClass && bulkGradeSubject && bulkGradeTerm) {
+      void loadBulkGradeRows(bulkGradeClass, bulkGradeSubject, bulkGradeTerm);
+    } else {
+      setBulkGradeRows([]);
+    }
+  }, [bulkGradeClass, bulkGradeSubject, bulkGradeTerm, students]);
 
   const filteredGradeStudents = filterStudentsByClass(students, gradeClass);
   const filteredViewStudents = filterStudentsByClass(students, viewClass);
@@ -277,6 +352,7 @@ export default function TeacherDashboard() {
         </div>
 
         {activeTab === 'grades' && (
+          <>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           {/* Grade Submission Form */}
           <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
@@ -457,20 +533,41 @@ export default function TeacherDashboard() {
                     <thead>
                       <tr className="border-b border-slate-200 text-slate-500 font-medium">
                         <th className="pb-2">Subject</th>
+                        <th className="pb-2">Term</th>
                         <th className="pb-2">CA</th>
                         <th className="pb-2">Exam</th>
                         <th className="pb-2">Total</th>
                         <th className="pb-2">Grade</th>
+                        <th className="pb-2">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 text-slate-700">
                       {reportData.map((r) => (
                         <tr key={r.id}>
                           <td className="py-2.5 font-medium">{r.subject}</td>
+                          <td className="py-2.5 font-mono">{r.term}</td>
                           <td className="py-2.5 font-mono">{r.ca_score}</td>
                           <td className="py-2.5 font-mono">{r.exam_score}</td>
                           <td className="py-2.5 font-bold font-mono text-blue-600">{r.total_score}</td>
                           <td className="py-2.5 font-bold">{r.grade}</td>
+                          <td className="py-2.5">
+                            <div className="flex gap-2">
+                              <button type="button" onClick={() => {
+                                setGradeForm({
+                                  ...gradeForm,
+                                  subject: r.subject,
+                                  term: r.term,
+                                  caScore: String(r.ca_score ?? ''),
+                                  examScore: String(r.exam_score ?? '')
+                                });
+                              }} className="border border-slate-300 rounded p-1" title="Edit grade"><Plus className="h-3.5 w-3.5" /></button>
+                              <button type="button" onClick={async () => {
+                                const ok = window.confirm(`Remove ${r.subject} for ${r.term}? This cannot be undone.`);
+                                if (!ok) return;
+                                try { await API.delete(`/report-cards/${r.id}`); fetchStudentReport(selectedStudentId); showNotification('success', 'Grade removed successfully.'); } catch (err) { showNotification('error', err.response?.data?.message || 'Could not delete the grade.'); }
+                              }} className="border border-red-200 rounded p-1 text-red-600" title="Delete grade"><Trash2 className="h-3.5 w-3.5" /></button>
+                            </div>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -485,6 +582,64 @@ export default function TeacherDashboard() {
           </div>
         </div>
 
+        <div className="mt-8 bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+          <h3 className="text-lg font-bold text-slate-800 mb-4">Grade Sheet</h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+            <select value={bulkGradeClass} onChange={(e) => setBulkGradeClass(e.target.value)} className="w-full p-2.5 border border-slate-300 rounded-lg text-sm bg-white">
+              <option value="">Select class</option>
+              {classOptions.map((classItem) => (
+                <option key={classItem.id} value={classItem.id}>{classItem.name}</option>
+              ))}
+            </select>
+            <input type="text" value={bulkGradeSubject} onChange={(e) => setBulkGradeSubject(e.target.value)} placeholder="Subject" className="w-full p-2.5 border border-slate-300 rounded-lg text-sm" />
+            <select value={bulkGradeTerm} onChange={(e) => setBulkGradeTerm(e.target.value)} className="w-full p-2.5 border border-slate-300 rounded-lg text-sm bg-white">
+              <option value="First Term">First Term</option>
+              <option value="Second Term">Second Term</option>
+              <option value="Third Term">Third Term</option>
+            </select>
+          </div>
+          {bulkGradeSummary && (
+            <div className={`mb-4 rounded-lg border px-3 py-2 text-sm ${bulkGradeSummary.error ? 'border-red-200 bg-red-50 text-red-700' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}>
+              {bulkGradeSummary.error ? bulkGradeSummary.error : `${bulkGradeSummary.saved ?? 0} saved, ${bulkGradeSummary.skipped ?? 0} skipped${bulkGradeSummary.skippedStudents?.length ? ` (${bulkGradeSummary.skippedStudents.join(', ')})` : ''}`}
+            </div>
+          )}
+          {bulkGradeLoading ? (
+            <p className="text-sm text-slate-500">Loading grade sheet…</p>
+          ) : bulkGradeRows.length > 0 ? (
+            <div className="overflow-x-auto border border-slate-200 rounded-lg">
+              <table className="w-full text-left text-sm">
+                <thead className="bg-slate-100">
+                  <tr>
+                    <th className="p-2">Student</th>
+                    <th className="p-2">CA</th>
+                    <th className="p-2">Exam</th>
+                    <th className="p-2">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {bulkGradeRows.map((row) => (
+                    <tr key={row.studentId} className="border-t border-slate-200">
+                      <td className="p-2 font-medium">{row.studentName}</td>
+                      <td className="p-2">
+                        {row.existing ? <span className="text-slate-500">{row.caScore}</span> : <input type="number" value={row.caScore} min="0" max="40" onChange={(e) => setBulkGradeRows((current) => current.map((item) => item.studentId === row.studentId ? { ...item, caScore: e.target.value } : item))} className="w-20 border border-slate-300 rounded px-2 py-1" />}
+                      </td>
+                      <td className="p-2">
+                        {row.existing ? <span className="text-slate-500">{row.examScore}</span> : <input type="number" value={row.examScore} min="0" max="60" onChange={(e) => setBulkGradeRows((current) => current.map((item) => item.studentId === row.studentId ? { ...item, examScore: e.target.value } : item))} className="w-20 border border-slate-300 rounded px-2 py-1" />}
+                      </td>
+                      <td className="p-2">{row.existing ? <span className="text-amber-700 text-xs font-semibold">already recorded — use edit to change</span> : <span className="text-emerald-700 text-xs font-semibold">ready to save</span>}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : bulkGradeClass ? (
+            <p className="text-sm text-slate-500">No students found in this class.</p>
+          ) : (
+            <p className="text-sm text-slate-500">Choose a class to load the grade sheet.</p>
+          )}
+          <button type="button" onClick={handleBulkGradeSave} disabled={!bulkGradeClass || bulkGradeLoading} className="mt-4 rounded-lg bg-blue-600 text-white px-4 py-2.5 text-sm font-semibold disabled:opacity-50">Save All</button>
+        </div>
+          </>
         )}
 
         {activeTab === 'messages' && (

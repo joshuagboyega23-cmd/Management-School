@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { Users, UserCheck, FileText, CreditCard, CheckCircle, GraduationCap, ArrowLeft, LogOut, Menu, X, Clock, RefreshCw, Bell, MessageSquareText, KeyRound, Share2, Trash2 } from 'lucide-react';
+import { Users, UserCheck, FileText, CreditCard, CheckCircle, GraduationCap, ArrowLeft, LogOut, Menu, X, Clock, RefreshCw, Bell, MessageSquareText, KeyRound, Share2, Trash2, Download } from 'lucide-react';
 
 import StudentsModule from './StudentsModule';
 import StaffModule from './StaffModule';
@@ -46,6 +46,11 @@ export default function AdminDashboard() {
   const [resetPassword, setResetPassword] = useState('');
   const [confirmResetPassword, setConfirmResetPassword] = useState('');
   const [issuedPassword, setIssuedPassword] = useState('');
+  const [adminForm, setAdminForm] = useState({ full_name: '', email: '', password: '', confirmPassword: '' });
+  const [activityLog, setActivityLog] = useState([]);
+  const [activityFilter, setActivityFilter] = useState('All');
+  const [promotionForm, setPromotionForm] = useState({ fromClassId: '', toClassId: '', confirmText: '' });
+  const [promotionSummary, setPromotionSummary] = useState(null);
   const [newMessageForm, setNewMessageForm] = useState({
     target_role: 'PARENT',
     audience: { mode: 'ALL', classIds: [], userIds: [] },
@@ -152,6 +157,15 @@ export default function AdminDashboard() {
     }
   };
 
+  const fetchActivityLog = async () => {
+    try {
+      const res = await API.get('/admin/activity-log', { params: { limit: 25 } });
+      setActivityLog(Array.isArray(res.data?.data) ? res.data.data : []);
+    } catch (err) {
+      setActivityLog([]);
+    }
+  };
+
   useEffect(() => {
     fetchStudents();
     fetchTeachers();
@@ -159,6 +173,7 @@ export default function AdminDashboard() {
     fetchPendingPayments();
     fetchAnnouncements();
     fetchConversations();
+    fetchActivityLog();
   }, []);
 
   useEffect(() => {
@@ -389,6 +404,73 @@ export default function AdminDashboard() {
     setIssuedPassword('');
   };
 
+  const handleCreateAdmin = async (e) => {
+    e.preventDefault();
+    if (!adminForm.full_name.trim() || !adminForm.email.trim() || !adminForm.password || !adminForm.confirmPassword) {
+      showNotification('error', 'Complete all admin details before creating the account.');
+      return;
+    }
+    if (adminForm.password !== adminForm.confirmPassword) {
+      showNotification('error', 'Passwords do not match.');
+      return;
+    }
+    try {
+      const res = await API.post('/auth/register', {
+        full_name: adminForm.full_name.trim(),
+        email: adminForm.email.trim().toLowerCase(),
+        password: adminForm.password,
+        role: 'ADMIN'
+      });
+      showNotification('success', res.data?.message || 'Admin account created successfully.');
+      setAdminForm({ full_name: '', email: '', password: '', confirmPassword: '' });
+      fetchTeachers();
+    } catch (err) {
+      showNotification('error', err.response?.data?.message || err.response?.data?.error || 'Could not create admin account.');
+    }
+  };
+
+  const handleExportCsv = async (endpoint, filename) => {
+    try {
+      const res = await API.get(endpoint, { responseType: 'blob' });
+      const blob = new Blob([res.data], { type: 'text/csv;charset=utf-8;' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      showNotification('error', err.response?.data?.message || 'Unable to download the export.');
+    }
+  };
+
+  const handlePromoteClass = async (e) => {
+    e.preventDefault();
+    if (!promotionForm.fromClassId) {
+      showNotification('error', 'Select the class to promote from.');
+      return;
+    }
+    if (promotionForm.confirmText !== 'PROMOTE') {
+      showNotification('error', 'Type PROMOTE to confirm the class move.');
+      return;
+    }
+    try {
+      const res = await API.post('/admin/promote-class', {
+        fromClassId: Number(promotionForm.fromClassId),
+        toClassId: promotionForm.toClassId ? Number(promotionForm.toClassId) : null
+      });
+      setPromotionSummary(res.data);
+      setPromotionForm({ fromClassId: '', toClassId: '', confirmText: '' });
+      fetchStudents();
+      fetchActivityLog();
+      showNotification('success', res.data.message || 'Class promotion completed.');
+    } catch (err) {
+      showNotification('error', err.response?.data?.message || 'Could not promote class.');
+    }
+  };
+
   const registeredTeachers = teachers.filter((teacher) => teacher.is_registered && teacher.id);
   const classOptions = [...new Map(
     students
@@ -479,6 +561,24 @@ export default function AdminDashboard() {
             <Share2 className="h-5 w-5" /> Share Materials
           </button>
           <button
+            onClick={() => handleTabSelect('export-data')}
+            className={`flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition ${activeTab === 'export-data' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-slate-800'}`}
+          >
+            <Download className="h-5 w-5" /> Export Data
+          </button>
+          <button
+            onClick={() => handleTabSelect('activity-log')}
+            className={`flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition ${activeTab === 'activity-log' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-slate-800'}`}
+          >
+            <Bell className="h-5 w-5" /> Activity Log
+          </button>
+          <button
+            onClick={() => handleTabSelect('promote-class')}
+            className={`flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition ${activeTab === 'promote-class' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-slate-800'}`}
+          >
+            <GraduationCap className="h-5 w-5" /> Promote Class
+          </button>
+          <button
             onClick={() => handleTabSelect('password-reset')}
             className={`flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition ${activeTab === 'password-reset' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-slate-800'}`}
           >
@@ -548,11 +648,36 @@ export default function AdminDashboard() {
         )}
 
         {activeTab === 'staff' && (
-          <StaffModule 
-            teachers={teachers} 
-            loading={loadingStaff} 
-            onImportTeachers={handleImportTeachers} 
-          />
+          <>
+            <StaffModule 
+              teachers={teachers} 
+              loading={loadingStaff} 
+              onImportTeachers={handleImportTeachers} 
+            />
+
+            <div className="mt-8 max-w-xl rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <h3 className="mb-4 text-lg font-bold text-slate-800">Add Admin</h3>
+              <form onSubmit={handleCreateAdmin} className="space-y-4">
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">Full name</label>
+                  <input type="text" value={adminForm.full_name} onChange={(e) => setAdminForm({ ...adminForm, full_name: e.target.value })} className="w-full rounded-lg border border-slate-300 p-2.5 text-sm" required />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">Email</label>
+                  <input type="email" value={adminForm.email} onChange={(e) => setAdminForm({ ...adminForm, email: e.target.value })} className="w-full rounded-lg border border-slate-300 p-2.5 text-sm" required />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">Password</label>
+                  <PasswordInput value={adminForm.password} onChange={(e) => setAdminForm({ ...adminForm, password: e.target.value })} required className="w-full rounded-lg border border-slate-300 p-2.5 pr-10 text-sm" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">Confirm password</label>
+                  <PasswordInput value={adminForm.confirmPassword} onChange={(e) => setAdminForm({ ...adminForm, confirmPassword: e.target.value })} required className="w-full rounded-lg border border-slate-300 p-2.5 pr-10 text-sm" />
+                </div>
+                <button type="submit" className="w-full rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700">Create Admin Account</button>
+              </form>
+            </div>
+          </>
         )}
 
         {activeTab === 'reports' && (
@@ -812,6 +937,89 @@ export default function AdminDashboard() {
 
         {activeTab === 'materials' && (
           <MaterialsManager students={students} onNotify={showNotification} />
+        )}
+
+        {activeTab === 'export-data' && (
+          <div className="max-w-2xl rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <h3 className="mb-4 text-lg font-bold text-slate-800">Export Data</h3>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <button type="button" onClick={() => handleExportCsv('/admin/export/students', 'students-export.csv')} className="flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-100">
+                <Download className="h-4 w-4" /> Students
+              </button>
+              <button type="button" onClick={() => handleExportCsv('/admin/export/grades', 'grades-export.csv')} className="flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-100">
+                <Download className="h-4 w-4" /> Grades
+              </button>
+              <button type="button" onClick={() => handleExportCsv('/admin/export/payments', 'payments-export.csv')} className="flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-100">
+                <Download className="h-4 w-4" /> Payments
+              </button>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'activity-log' && (
+          <div className="max-w-4xl rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <h3 className="text-lg font-bold text-slate-800">Activity Log</h3>
+              <select value={activityFilter} onChange={(e) => setActivityFilter(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm">
+                <option value="All">All</option>
+                <option value="Grades">Grades</option>
+                <option value="Passwords">Passwords</option>
+                <option value="Admin">Admin</option>
+                <option value="Promotions">Promotions</option>
+              </select>
+            </div>
+            <div className="space-y-3">
+              {activityLog.filter((entry) => activityFilter === 'All' || entry.action === activityFilter).map((entry, index) => (
+                <div key={`${entry.created_at}-${index}`} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-600">
+                    <span>{entry.actor_name || 'System'}</span>
+                    <span>•</span>
+                    <span>{entry.actor_role || 'ADMIN'}</span>
+                    <span>•</span>
+                    <span className="rounded-full bg-blue-100 px-2 py-0.5 text-blue-700">{entry.action}</span>
+                  </div>
+                  <p className="mt-2 text-sm text-slate-800">{entry.target_description}</p>
+                  <p className="mt-1 text-[11px] text-slate-500">{new Date(entry.created_at).toLocaleString()}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'promote-class' && (
+          <div className="max-w-xl rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <h3 className="mb-4 text-lg font-bold text-slate-800">Promote Class</h3>
+            <form onSubmit={handlePromoteClass} className="space-y-4">
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-slate-600">Promote from</label>
+                <select value={promotionForm.fromClassId} onChange={(e) => setPromotionForm({ ...promotionForm, fromClassId: e.target.value })} className="w-full rounded-lg border border-slate-300 p-2.5 text-sm">
+                  <option value="">Select class</option>
+                  {classOptions.map((classItem) => (
+                    <option key={classItem.id} value={classItem.id}>{classItem.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-slate-600">Destination class (leave blank to graduate / mark inactive)</label>
+                <select value={promotionForm.toClassId} onChange={(e) => setPromotionForm({ ...promotionForm, toClassId: e.target.value })} className="w-full rounded-lg border border-slate-300 p-2.5 text-sm">
+                  <option value="">Graduate / Mark Inactive</option>
+                  {classOptions.map((classItem) => (
+                    <option key={classItem.id} value={classItem.id}>{classItem.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-slate-600">Type PROMOTE to confirm</label>
+                <input type="text" value={promotionForm.confirmText} onChange={(e) => setPromotionForm({ ...promotionForm, confirmText: e.target.value })} className="w-full rounded-lg border border-slate-300 p-2.5 text-sm" placeholder="PROMOTE" />
+              </div>
+              <button type="submit" className="w-full rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700">Confirm Promotion</button>
+            </form>
+            {promotionSummary && (
+              <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                {promotionSummary.message}
+              </div>
+            )}
+          </div>
         )}
 
         {activeTab === 'messages' && (
