@@ -451,7 +451,7 @@ app.get('/', (req, res) => {
 // =============================================================
 
 // Admin direct-create flow: restricted to ADMIN accounts only
-app.post('/api/auth/register', verifyToken, requireRole('ADMIN', 'SUPERADMIN'), validate(schemas.adminRegister), async (req, res) => {
+const createAdminAccount = async (req, res) => {
   const { full_name, email, password, role } = req.body;
 
   if (!full_name || !email || !password || !role) {
@@ -500,7 +500,10 @@ app.post('/api/auth/register', verifyToken, requireRole('ADMIN', 'SUPERADMIN'), 
   } finally {
     client.release();
   }
-});
+};
+
+app.post('/api/auth/register', verifyToken, requireRole('ADMIN', 'SUPERADMIN'), validate(schemas.adminRegister), createAdminAccount);
+app.post('/api/admin/create-admin', verifyToken, requireRole('ADMIN', 'SUPERADMIN'), validate(schemas.adminRegister), createAdminAccount);
 
 // Admin-only: Import student roster pre-load (CSV or JSON Array)
 app.post('/api/auth/admin/import-students', verifyToken, requireRole('ADMIN', 'SUPERADMIN'), validate(schemas.importStudents), async (req, res) => {
@@ -2083,14 +2086,14 @@ app.patch('/api/report-cards/:id', verifyToken, requireRole('TEACHER', 'ADMIN', 
     }
 
     const totalScore = nextCa + nextExam;
-    const { grade } = calculateGradeAndRemark(totalScore);
+    const { grade, remark } = calculateGradeAndRemark(totalScore);
 
     const updated = await (req.db || pool).query(
       `UPDATE report_cards
-       SET ca_score = $1, exam_score = $2, total_score = $3, grade = $4
-       WHERE id = $5
+       SET ca_score = $1, exam_score = $2, total_score = $3, grade = $4, remark = $5
+       WHERE id = $6
        RETURNING *`,
-      [nextCa, nextExam, totalScore, grade, Number(id)]
+      [nextCa, nextExam, totalScore, grade, remark, Number(id)]
     );
 
     await logActivity({

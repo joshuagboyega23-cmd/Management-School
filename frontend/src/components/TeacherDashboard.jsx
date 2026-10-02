@@ -35,7 +35,8 @@ export default function TeacherDashboard() {
     term: 'First Term',
     subject: 'Mathematics',
     caScore: '',
-    examScore: ''
+    examScore: '',
+    remark: ''
   });
   const [bulkGradeClass, setBulkGradeClass] = useState('');
   const [bulkGradeSubject, setBulkGradeSubject] = useState('Mathematics');
@@ -140,7 +141,8 @@ export default function TeacherDashboard() {
       setGradeForm({
         ...gradeForm,
         caScore: '',
-        examScore: ''
+        examScore: '',
+        remark: ''
       });
     } catch (err) {
       showNotification('error', err.response?.data?.message || err.response?.data?.error || 'Failed to submit grade');
@@ -474,6 +476,13 @@ export default function TeacherDashboard() {
                 </div>
               </div>
 
+              {editingGradeId && (
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Remark (calculated from total score)</label>
+                  <input type="text" value={gradeForm.remark} readOnly className="w-full rounded-lg border border-slate-300 bg-slate-50 p-2.5 text-sm text-slate-600" />
+                </div>
+              )}
+
               <button
                 type="submit"
                 className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2.5 rounded-lg text-sm transition shadow flex items-center justify-center gap-2 mt-4"
@@ -482,7 +491,7 @@ export default function TeacherDashboard() {
                 {editingGradeId ? 'Update Grade Record' : 'Save Grade Record'}
               </button>
               {editingGradeId && (
-                <button type="button" onClick={() => setEditingGradeId(null)} className="w-full rounded-lg border border-slate-300 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">
+                <button type="button" onClick={() => { setEditingGradeId(null); setGradeForm({ ...gradeForm, remark: '' }); }} className="w-full rounded-lg border border-slate-300 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">
                   Cancel Edit
                 </button>
               )}
@@ -581,7 +590,8 @@ export default function TeacherDashboard() {
                                   subject: r.subject,
                                   term: r.term,
                                   caScore: String(r.ca_score ?? ''),
-                                  examScore: String(r.exam_score ?? '')
+                                  examScore: String(r.exam_score ?? ''),
+                                  remark: r.remark || ''
                                 });
                               }} className="border border-slate-300 rounded p-1" title="Edit grade"><Pencil className="h-3.5 w-3.5" /></button>
                               <button type="button" onClick={async () => {

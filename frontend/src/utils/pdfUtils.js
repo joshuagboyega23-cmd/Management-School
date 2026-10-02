@@ -3,6 +3,89 @@ import autoTable from 'jspdf-autotable';
 
 const SCHOOL_NAME = 'Pinnacle Heights Academy';
 const SCHOOL_TAGLINE = 'Excellence in Education — Lagos, Nigeria';
+const SCHOOL_MOTTO = 'Excellence in Knowledge & Character';
+
+function drawArcText(ctx, text, radius, centerAngle, direction, font, color) {
+  ctx.save();
+  ctx.font = font;
+  ctx.fillStyle = color;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  const characters = Array.from(text);
+  const widths = characters.map((character) => ctx.measureText(character).width);
+  let angle = centerAngle - (direction * widths.reduce((sum, width) => sum + width / radius, 0)) / 2;
+
+  characters.forEach((character, index) => {
+    const halfAngle = widths[index] / radius / 2;
+    angle += direction * halfAngle;
+    ctx.save();
+    ctx.translate(240 + Math.cos(angle) * radius, 240 + Math.sin(angle) * radius);
+    ctx.rotate(angle + direction * Math.PI / 2);
+    ctx.fillText(character, 0, 0);
+    ctx.restore();
+    angle += direction * halfAngle;
+  });
+
+  ctx.restore();
+}
+
+export function createSchoolEmblemDataUrl() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 480;
+  canvas.height = 480;
+  const ctx = canvas.getContext('2d');
+
+  ctx.fillStyle = '#0f172a';
+  ctx.beginPath();
+  ctx.arc(240, 240, 232, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = '#e8c66a';
+  ctx.lineWidth = 8;
+  ctx.beginPath();
+  ctx.arc(240, 240, 232, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.strokeStyle = '#f8fafc';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.arc(240, 240, 216, 0, Math.PI * 2);
+  ctx.stroke();
+
+  drawArcText(ctx, 'PHA', 174, -Math.PI / 2, 1, 'bold 54px Georgia, serif', '#f8fafc');
+  drawArcText(ctx, SCHOOL_MOTTO, 174, Math.PI / 2, -1, 'bold 21px Georgia, serif', '#e8c66a');
+
+  ctx.strokeStyle = '#f8fafc';
+  ctx.fillStyle = '#e8c66a';
+  ctx.lineWidth = 9;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  ctx.moveTo(110, 196);
+  ctx.quadraticCurveTo(174, 178, 240, 216);
+  ctx.quadraticCurveTo(306, 178, 370, 196);
+  ctx.lineTo(370, 286);
+  ctx.quadraticCurveTo(306, 268, 240, 306);
+  ctx.quadraticCurveTo(174, 268, 110, 286);
+  ctx.closePath();
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(240, 216);
+  ctx.lineTo(240, 306);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(132, 220);
+  ctx.quadraticCurveTo(178, 211, 216, 231);
+  ctx.moveTo(264, 231);
+  ctx.quadraticCurveTo(302, 211, 348, 220);
+  ctx.moveTo(132, 250);
+  ctx.quadraticCurveTo(178, 241, 216, 261);
+  ctx.moveTo(264, 261);
+  ctx.quadraticCurveTo(302, 241, 348, 250);
+  ctx.stroke();
+
+  return canvas.toDataURL('image/png');
+}
 
 /**
  * Adds a standard school header to the PDF and returns the Y position after it.
@@ -10,16 +93,17 @@ const SCHOOL_TAGLINE = 'Excellence in Education — Lagos, Nigeria';
 function addHeader(doc, title, subtitle = '') {
   doc.setFillColor(15, 23, 42); // slate-900
   doc.rect(0, 0, 210, 28, 'F');
+  doc.addImage(createSchoolEmblemDataUrl(), 'PNG', 7, 3, 22, 22);
 
   doc.setTextColor(255, 255, 255);
   doc.setFontSize(14);
   doc.setFont('helvetica', 'bold');
-  doc.text(SCHOOL_NAME, 14, 11);
+  doc.text(SCHOOL_NAME, 34, 11);
 
   doc.setFontSize(8);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(148, 163, 184); // slate-400
-  doc.text(SCHOOL_TAGLINE, 14, 18);
+  doc.text(SCHOOL_TAGLINE, 34, 18);
 
   doc.setTextColor(255, 255, 255);
   doc.setFontSize(8);

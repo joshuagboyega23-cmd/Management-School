@@ -26,6 +26,7 @@ export default function AdminDashboard() {
   const [message, setMessage] = useState({ type: '', text: '' });
   const [reportData, setReportData] = useState(null);
   const [pendingPayments, setPendingPayments] = useState([]);
+  const [paymentHistory, setPaymentHistory] = useState([]);
   const [verifyingRef, setVerifyingRef] = useState('');
   const [announcementForm, setAnnouncementForm] = useState({
     title: '',
@@ -46,7 +47,8 @@ export default function AdminDashboard() {
   const [resetPassword, setResetPassword] = useState('');
   const [confirmResetPassword, setConfirmResetPassword] = useState('');
   const [issuedPassword, setIssuedPassword] = useState('');
-  const [adminForm, setAdminForm] = useState({ full_name: '', email: '', password: '', confirmPassword: '' });
+  const [adminForm, setAdminForm] = useState({ full_name: '', email: '', password: '', confirmPassword: '', role: 'ADMIN' });
+  const [adminUsers, setAdminUsers] = useState([]);
   const [activityLog, setActivityLog] = useState([]);
   const [activityFilter, setActivityFilter] = useState('All');
   const [promotionForm, setPromotionForm] = useState({ fromClassId: '', toClassId: '', confirmText: '' });
@@ -86,6 +88,15 @@ export default function AdminDashboard() {
       setTeachers([]);
     } finally {
       setLoadingStaff(false);
+    }
+  };
+
+  const fetchAdminUsers = async () => {
+    try {
+      const res = await API.get('/admin/users', { params: { query: '' } });
+      setAdminUsers((Array.isArray(res.data?.data) ? res.data.data : []).filter((user) => ['ADMIN', 'SUPERADMIN'].includes(user.role)));
+    } catch (err) {
+      setAdminUsers([]);
     }
   };
 
@@ -136,9 +147,11 @@ export default function AdminDashboard() {
     try {
       const res = await API.get('/payments/history');
       const list = Array.isArray(res.data?.data) ? res.data.data : [];
+      setPaymentHistory(list);
       setPendingPayments(list.filter((payment) => payment.status === 'PENDING'));
     } catch (err) {
       console.error('Error fetching pending payments:', err);
+      setPaymentHistory([]);
       setPendingPayments([]);
     }
   };
@@ -204,6 +217,7 @@ export default function AdminDashboard() {
   useEffect(() => {
     fetchStudents();
     fetchTeachers();
+    fetchAdminUsers();
     fetchParents();
     fetchPendingPayments();
     fetchAnnouncements();
@@ -450,15 +464,15 @@ export default function AdminDashboard() {
       return;
     }
     try {
-      const res = await API.post('/auth/register', {
+      const res = await API.post('/admin/create-admin', {
         full_name: adminForm.full_name.trim(),
         email: adminForm.email.trim().toLowerCase(),
         password: adminForm.password,
-        role: 'ADMIN'
+        role: adminForm.role
       });
       showNotification('success', res.data?.message || 'Admin account created successfully.');
-      setAdminForm({ full_name: '', email: '', password: '', confirmPassword: '' });
-      fetchTeachers();
+      setAdminForm({ full_name: '', email: '', password: '', confirmPassword: '', role: 'ADMIN' });
+      await fetchAdminUsers();
     } catch (err) {
       showNotification('error', err.response?.data?.message || err.response?.data?.error || 'Could not create admin account.');
     }
@@ -704,6 +718,12 @@ export default function AdminDashboard() {
                   <input type="email" value={adminForm.email} onChange={(e) => setAdminForm({ ...adminForm, email: e.target.value })} className="w-full rounded-lg border border-slate-300 p-2.5 text-sm" required />
                 </div>
                 <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">Role</label>
+                  <select value={adminForm.role} onChange={(e) => setAdminForm({ ...adminForm, role: e.target.value })} className="w-full rounded-lg border border-slate-300 bg-white p-2.5 text-sm" required>
+                    <option value="ADMIN">Admin</option>
+                  </select>
+                </div>
+                <div>
                   <label className="mb-1 block text-xs font-semibold text-slate-600">Password</label>
                   <PasswordInput value={adminForm.password} onChange={(e) => setAdminForm({ ...adminForm, password: e.target.value })} required className="w-full rounded-lg border border-slate-300 p-2.5 pr-10 text-sm" />
                 </div>
@@ -713,6 +733,21 @@ export default function AdminDashboard() {
                 </div>
                 <button type="submit" className="w-full rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700">Create Admin Account</button>
               </form>
+              <div className="mt-6 border-t border-slate-200 pt-4">
+                <h4 className="mb-3 text-sm font-semibold text-slate-700">Admin Accounts</h4>
+                {adminUsers.length ? (
+                  <ul className="space-y-2">
+                    {adminUsers.map((user) => (
+                      <li key={user.id} className="flex items-center justify-between gap-3 text-sm">
+                        <span className="min-w-0 truncate font-medium text-slate-800">{user.full_name}<span className="ml-2 text-xs font-normal text-slate-500">{user.email}</span></span>
+                        <span className="shrink-0 text-xs font-semibold text-slate-500">{user.role}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-xs text-slate-500">No admin accounts found.</p>
+                )}
+              </div>
             </div>
           </>
         )}
@@ -762,6 +797,7 @@ export default function AdminDashboard() {
 
             <PaymentsModule 
               students={students} 
+              paymentHistory={paymentHistory}
               onProcessPayment={handlePaymentSubmit} 
             />
           </div>

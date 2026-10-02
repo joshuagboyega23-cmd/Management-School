@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { ExternalLink } from 'lucide-react';
 
-export default function PaymentsModule({ students, onProcessPayment }) {
+export default function PaymentsModule({ students, paymentHistory, onProcessPayment }) {
   const currentYear = new Date().getFullYear();
+  const [selectedClassId, setSelectedClassId] = useState('');
   const [paymentForm, setPaymentForm] = useState({
     studentId: '',
     email: '',
@@ -11,6 +12,17 @@ export default function PaymentsModule({ students, onProcessPayment }) {
   });
 
   const studentList = Array.isArray(students) ? students : [];
+  const paymentList = Array.isArray(paymentHistory) ? paymentHistory : [];
+  const classOptions = [...new Map(
+    studentList
+      .filter((student) => student.class_id && student.class_name)
+      .map((student) => [String(student.class_id), { id: student.class_id, name: student.class_name }])
+  ).values()];
+  const classStudents = studentList.filter((student) => String(student.class_id) === String(selectedClassId));
+  const selectedPayments = paymentList.filter((payment) => String(payment.student_id) === String(paymentForm.studentId));
+  const pendingTotal = selectedPayments
+    .filter((payment) => payment.status === 'PENDING')
+    .reduce((total, payment) => total + Number(payment.amount || 0), 0);
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -28,19 +40,59 @@ export default function PaymentsModule({ students, onProcessPayment }) {
 
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
+          <label className="mb-1 block text-xs font-semibold text-gray-600">Select Class</label>
+          <select
+            value={selectedClassId}
+            onChange={(e) => {
+              setSelectedClassId(e.target.value);
+              setPaymentForm({ ...paymentForm, studentId: '' });
+            }}
+            required
+            className="w-full rounded-lg border border-gray-300 bg-white p-2.5 text-sm"
+          >
+            <option value="">-- Choose Class --</option>
+            {classOptions.map((classItem) => (
+              <option key={classItem.id} value={classItem.id}>{classItem.name}</option>
+            ))}
+          </select>
+        </div>
+
+        <div>
           <label className="block text-xs font-semibold text-gray-600 mb-1">Select Student</label>
-          <select 
+          <select
             value={paymentForm.studentId} 
             onChange={(e) => setPaymentForm({ ...paymentForm, studentId: e.target.value })}
-            required 
+            required
+            disabled={!selectedClassId}
             className="w-full p-2.5 border border-gray-300 rounded-lg text-sm bg-white"
           >
-            <option value="">-- Choose Student --</option>
-            {studentList.map((s) => (
+            <option value="">{selectedClassId ? '-- Choose Student --' : 'Select a class first'}</option>
+            {classStudents.map((s) => (
               <option key={s.id} value={s.id}>{s.name} ({s.admission_no})</option>
             ))}
           </select>
         </div>
+
+        {paymentForm.studentId && (
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <h4 className="text-sm font-semibold text-slate-800">Payment History</h4>
+              <span className="text-xs font-medium text-amber-800">Pending transactions: NGN {pendingTotal.toLocaleString()}</span>
+            </div>
+            {selectedPayments.length === 0 ? (
+              <p className="text-xs text-slate-500">No payment history for this student.</p>
+            ) : (
+              <div className="max-h-44 space-y-2 overflow-y-auto">
+                {selectedPayments.map((payment) => (
+                  <div key={payment.id} className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 pt-2 text-xs">
+                    <span className="text-slate-600">{payment.term || 'Term'} · {payment.reference}</span>
+                    <span className="font-semibold text-slate-800">NGN {Number(payment.amount || 0).toLocaleString()} · {payment.status}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         <div>
           <label className="block text-xs font-semibold text-gray-600 mb-1">Parent Email</label>
