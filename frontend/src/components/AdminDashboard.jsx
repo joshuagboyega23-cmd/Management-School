@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { Users, UserCheck, FileText, CreditCard, CheckCircle, GraduationCap, ArrowLeft, LogOut, Menu, X, Clock, RefreshCw, Bell, MessageSquareText, KeyRound, Share2, Trash2, Download } from 'lucide-react';
+import { Users, UserCheck, FileText, CreditCard, CheckCircle, GraduationCap, ArrowLeft, LogOut, Menu, X, Clock, RefreshCw, Bell, MessageSquareText, KeyRound, Share2, Trash2, Download, UserPlus } from 'lucide-react';
 
 import StudentsModule from './StudentsModule';
 import StaffModule from './StaffModule';
@@ -579,6 +579,12 @@ export default function AdminDashboard() {
           >
             <UserCheck className="h-5 w-5" /> Staff Management
           </button>
+          <button
+            onClick={() => handleTabSelect('create-admin')}
+            className={`flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition ${activeTab === 'create-admin' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-slate-800'}`}
+          >
+            <UserPlus className="h-5 w-5" /> Create Admin Account
+          </button>
           <button 
             onClick={() => handleTabSelect('reports')}
             className={`flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition ${activeTab === 'reports' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-slate-800'}`}
@@ -698,58 +704,57 @@ export default function AdminDashboard() {
         )}
 
         {activeTab === 'staff' && (
-          <>
-            <StaffModule 
-              teachers={teachers} 
-              loading={loadingStaff} 
-              onImportTeachers={handleImportTeachers} 
-              onDeleteTeacher={handleDeleteTeacher}
-            />
+          <StaffModule 
+            teachers={teachers} 
+            loading={loadingStaff} 
+            onImportTeachers={handleImportTeachers} 
+            onDeleteTeacher={handleDeleteTeacher}
+          />
+        )}
 
-            <div className="mt-8 max-w-xl rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-              <h3 className="mb-4 text-lg font-bold text-slate-800">Add Admin</h3>
-              <form onSubmit={handleCreateAdmin} className="space-y-4">
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-slate-600">Full name</label>
-                  <input type="text" value={adminForm.full_name} onChange={(e) => setAdminForm({ ...adminForm, full_name: e.target.value })} className="w-full rounded-lg border border-slate-300 p-2.5 text-sm" required />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-slate-600">Email</label>
-                  <input type="email" value={adminForm.email} onChange={(e) => setAdminForm({ ...adminForm, email: e.target.value })} className="w-full rounded-lg border border-slate-300 p-2.5 text-sm" required />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-slate-600">Role</label>
-                  <select value={adminForm.role} onChange={(e) => setAdminForm({ ...adminForm, role: e.target.value })} className="w-full rounded-lg border border-slate-300 bg-white p-2.5 text-sm" required>
-                    <option value="ADMIN">Admin</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-slate-600">Password</label>
-                  <PasswordInput value={adminForm.password} onChange={(e) => setAdminForm({ ...adminForm, password: e.target.value })} required className="w-full rounded-lg border border-slate-300 p-2.5 pr-10 text-sm" />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-slate-600">Confirm password</label>
-                  <PasswordInput value={adminForm.confirmPassword} onChange={(e) => setAdminForm({ ...adminForm, confirmPassword: e.target.value })} required className="w-full rounded-lg border border-slate-300 p-2.5 pr-10 text-sm" />
-                </div>
-                <button type="submit" className="w-full rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700">Create Admin Account</button>
-              </form>
-              <div className="mt-6 border-t border-slate-200 pt-4">
-                <h4 className="mb-3 text-sm font-semibold text-slate-700">Admin Accounts</h4>
-                {adminUsers.length ? (
-                  <ul className="space-y-2">
-                    {adminUsers.map((user) => (
-                      <li key={user.id} className="flex items-center justify-between gap-3 text-sm">
-                        <span className="min-w-0 truncate font-medium text-slate-800">{user.full_name}<span className="ml-2 text-xs font-normal text-slate-500">{user.email}</span></span>
-                        <span className="shrink-0 text-xs font-semibold text-slate-500">{user.role}</span>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="text-xs text-slate-500">No admin accounts found.</p>
-                )}
-              </div>
+        {activeTab === 'create-admin' && (
+          <section className="max-w-xl rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="mb-5 flex items-center gap-3">
+              <UserPlus className="h-6 w-6 text-blue-600" />
+              <h3 className="text-lg font-bold text-slate-800">Create New Administrator</h3>
             </div>
-          </>
+            <form onSubmit={handleCreateAdmin} className="space-y-4">
+              <div>
+                <label htmlFor="new-admin-name" className="mb-1 block text-xs font-semibold text-slate-600">Full Name</label>
+                <input id="new-admin-name" type="text" autoComplete="name" value={adminForm.full_name} onChange={(e) => setAdminForm({ ...adminForm, full_name: e.target.value })} className="w-full rounded-lg border border-slate-300 p-2.5 text-sm" required />
+              </div>
+              <div>
+                <label htmlFor="new-admin-email" className="mb-1 block text-xs font-semibold text-slate-600">Email Address</label>
+                <input id="new-admin-email" type="email" autoComplete="email" value={adminForm.email} onChange={(e) => setAdminForm({ ...adminForm, email: e.target.value })} className="w-full rounded-lg border border-slate-300 p-2.5 text-sm" required />
+              </div>
+              <div>
+                <label htmlFor="new-admin-password" className="mb-1 block text-xs font-semibold text-slate-600">Password</label>
+                <PasswordInput id="new-admin-password" autoComplete="new-password" value={adminForm.password} onChange={(e) => setAdminForm({ ...adminForm, password: e.target.value })} required className="w-full rounded-lg border border-slate-300 p-2.5 pr-10 text-sm" />
+              </div>
+              <div>
+                <label htmlFor="new-admin-confirm-password" className="mb-1 block text-xs font-semibold text-slate-600">Confirm Password</label>
+                <PasswordInput id="new-admin-confirm-password" autoComplete="new-password" value={adminForm.confirmPassword} onChange={(e) => setAdminForm({ ...adminForm, confirmPassword: e.target.value })} required className="w-full rounded-lg border border-slate-300 p-2.5 pr-10 text-sm" />
+              </div>
+              <button type="submit" className="flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700">
+                <UserPlus className="h-4 w-4" /> Create Admin Account
+              </button>
+            </form>
+            <div className="mt-6 border-t border-slate-200 pt-4">
+              <h4 className="mb-3 text-sm font-semibold text-slate-700">Admin Accounts</h4>
+              {adminUsers.length ? (
+                <ul className="space-y-2">
+                  {adminUsers.map((user) => (
+                    <li key={user.id} className="flex items-center justify-between gap-3 text-sm">
+                      <span className="min-w-0 truncate font-medium text-slate-800">{user.full_name}<span className="ml-2 text-xs font-normal text-slate-500">{user.email}</span></span>
+                      <span className="shrink-0 text-xs font-semibold text-slate-500">{user.role}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-xs text-slate-500">No admin accounts found.</p>
+              )}
+            </div>
+          </section>
         )}
 
         {activeTab === 'reports' && (
