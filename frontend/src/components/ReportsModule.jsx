@@ -244,7 +244,6 @@ export default function ReportsModule({ students, onSubmitGrade, onFetchReportCa
                   min="0"
                   value={gradeForm.caScore}
                   onChange={(e) => setGradeForm({ ...gradeForm, caScore: e.target.value })}
-                  required
                   className="w-full p-2.5 border border-gray-300 rounded-lg text-sm"
                 />
               </div>
@@ -256,7 +255,6 @@ export default function ReportsModule({ students, onSubmitGrade, onFetchReportCa
                   min="0"
                   value={gradeForm.examScore}
                   onChange={(e) => setGradeForm({ ...gradeForm, examScore: e.target.value })}
-                  required
                   className="w-full p-2.5 border border-gray-300 rounded-lg text-sm"
                 />
               </div>

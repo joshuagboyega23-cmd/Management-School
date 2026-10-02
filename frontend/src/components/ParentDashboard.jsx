@@ -1,12 +1,14 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { GraduationCap, LogOut, Users, FileText, CreditCard, Award, ChevronDown, ChevronUp, AlertCircle, Clock, RefreshCw } from 'lucide-react';
+import { GraduationCap, LogOut, Users, FileText, CreditCard, Award, ChevronDown, ChevronUp, AlertCircle, Clock, RefreshCw, MessageSquareText, Menu, X } from 'lucide-react';
 import API, { SERVER_WAKING_MESSAGE } from '../opi';
 import { formatDateTime, downloadReceiptPDF } from '../utils/pdfUtils';
 
 export default function ParentDashboard() {
   const navigate = useNavigate();
   const [children, setChildren] = useState([]);
+  const [activeTab, setActiveTab] = useState('overview');
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [selectedChildId, setSelectedChildId] = useState(null);
@@ -119,6 +121,11 @@ export default function ParentDashboard() {
     navigate('/login');
   };
 
+  const handleTabSelect = (tab) => {
+    setActiveTab(tab);
+    setIsSidebarOpen(false);
+  };
+
   const showNotification = (type, text) => {
     setNotification({ type, text });
     setTimeout(() => setNotification({ type: '', text: '' }), 4000);
@@ -191,30 +198,52 @@ export default function ParentDashboard() {
     .sort((a, b) => new Date(a.event_date) - new Date(b.event_date));
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
-      {/* Top Navbar */}
-      <header className="bg-slate-900 text-white shadow-md">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
+    <div className="flex h-screen overflow-hidden bg-gray-100 font-sans">
+      {isSidebarOpen && (
+        <div onClick={() => setIsSidebarOpen(false)} className="fixed inset-0 z-30 bg-black/50 md:hidden" />
+      )}
+      <aside className={`fixed inset-y-0 left-0 z-40 flex w-64 shrink-0 flex-col overflow-y-auto bg-slate-900 p-4 text-white shadow-2xl transition-transform duration-300 md:static md:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+        <div className="flex items-center justify-between border-b border-slate-800 px-2 py-4">
           <div className="flex items-center gap-3">
-            <div className="bg-blue-600 rounded-full p-2">
-              <GraduationCap className="h-6 w-6 text-white" />
-            </div>
+            <GraduationCap className="h-8 w-8 text-blue-400" />
             <div>
-              <h1 className="text-lg font-bold">Parent & Guardian Portal</h1>
-              <p className="text-xs text-slate-400">Pinnacle Heights Academy</p>
+              <h1 className="text-base font-bold leading-tight">Pinnacle Heights</h1>
+              <p className="text-xs text-slate-400 leading-tight">Parent Portal</p>
             </div>
           </div>
-          <button
-            onClick={handleLogout}
-            className="flex items-center gap-2 text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-2 rounded-lg transition"
-          >
+          <button onClick={() => setIsSidebarOpen(false)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white md:hidden" aria-label="Close sidebar">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        <nav className="mt-6 flex flex-col gap-2">
+          {[
+            { id: 'overview', label: 'Overview', Icon: GraduationCap },
+            { id: 'grades', label: 'Grades', Icon: FileText },
+            { id: 'payments', label: 'Payments', Icon: CreditCard },
+            { id: 'messages', label: 'Messages', Icon: MessageSquareText }
+          ].map(({ id, label, Icon }) => (
+            <button key={id} onClick={() => handleTabSelect(id)} className={`flex items-center gap-3 rounded-lg px-4 py-3 text-left text-sm font-medium transition ${activeTab === id ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-slate-800'}`}>
+              <Icon className="h-5 w-5" /> {label}
+            </button>
+          ))}
+        </nav>
+        <div className="mt-auto space-y-2 border-t border-slate-800 pt-4">
+          <button onClick={handleLogout} className="flex w-full items-center gap-2 rounded px-2 py-2 text-xs text-red-400 transition hover:text-red-300">
             <LogOut className="h-4 w-4" /> Sign Out
           </button>
         </div>
-      </header>
+      </aside>
 
-      {/* Main Container */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 w-full">
+      <main className="flex-1 overflow-y-auto p-4 sm:p-8">
+        <header className="mb-6 flex items-center gap-3 rounded-xl border border-gray-200 bg-white p-4 shadow-sm sm:p-6">
+          <button onClick={() => setIsSidebarOpen(true)} className="rounded-lg bg-slate-100 p-2 text-slate-700 hover:bg-slate-200 md:hidden" aria-label="Open navigation menu">
+            <Menu className="h-5 w-5" />
+          </button>
+          <div>
+            <h2 className="text-xl font-bold capitalize text-gray-800">{activeTab} Portal</h2>
+            <p className="text-xs text-gray-500">Pinnacle Heights Academy — Parent Dashboard</p>
+          </div>
+        </header>
         {notification.text && (
           <div className={`mb-6 p-4 rounded-xl text-sm font-medium ${
             notification.type === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-red-50 text-red-800 border border-red-200'
@@ -230,7 +259,7 @@ export default function ParentDashboard() {
           </div>
         )}
 
-        {selectedChild && selectedChild.paymentHistory?.filter((p) => p.status === 'PENDING').length > 0 && (
+        {activeTab === 'payments' && selectedChild && selectedChild.paymentHistory?.filter((p) => p.status === 'PENDING').length > 0 && (
           <div className="mb-6 bg-amber-50 border border-amber-200 rounded-2xl p-6 shadow-sm">
             <div className="flex items-center gap-2 mb-3">
               <Clock className="h-5 w-5 text-amber-600" />
@@ -262,7 +291,7 @@ export default function ParentDashboard() {
           </div>
         )}
 
-        <div className="mb-8 grid grid-cols-1 xl:grid-cols-[1.4fr_0.6fr] gap-6">
+        <div className={`mb-8 grid grid-cols-1 gap-6 xl:grid-cols-[1.4fr_0.6fr] ${activeTab === 'overview' ? '' : 'hidden'}`}>
           <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
             <h3 className="text-lg font-bold text-slate-800 mb-3">School Announcements</h3>
             {announcements.length === 0 ? (
@@ -306,7 +335,7 @@ export default function ParentDashboard() {
         </div>
 
         {children.length === 0 ? (
-          <div className="bg-white rounded-2xl p-12 text-center border border-slate-200 shadow-sm max-w-xl mx-auto">
+          <div className={`${activeTab === 'overview' ? '' : 'hidden'} max-w-xl mx-auto rounded-2xl border border-slate-200 bg-white p-12 text-center shadow-sm`}>
             <Users className="h-12 w-12 text-slate-300 mx-auto mb-3" />
             <h3 className="text-lg font-bold text-slate-800 mb-1">No Linked Children</h3>
             <p className="text-sm text-slate-500">
@@ -340,7 +369,7 @@ export default function ParentDashboard() {
             {selectedChild && (
               <div className="lg:col-span-3 space-y-8">
                 {/* Child Header */}
-                <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm">
+                <div className={`${activeTab === 'overview' ? '' : 'hidden'} bg-white rounded-2xl p-6 border border-slate-200 shadow-sm`}>
                   <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                     <div>
                       <span className="text-xs font-semibold bg-blue-50 text-blue-700 px-3 py-1 rounded-full uppercase">
@@ -365,7 +394,7 @@ export default function ParentDashboard() {
                 </div>
 
                 {/* Report Card */}
-                <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm">
+                <div className={`${activeTab === 'grades' ? '' : 'hidden'} bg-white rounded-2xl p-6 border border-slate-200 shadow-sm`}>
                   <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
                     <Award className="h-5 w-5 text-blue-600" /> Academic Report Card
                   </h3>
@@ -411,7 +440,7 @@ export default function ParentDashboard() {
                 </div>
 
                 {/* Fee Payments */}
-                <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm">
+                <div className={`${activeTab === 'payments' ? '' : 'hidden'} bg-white rounded-2xl p-6 border border-slate-200 shadow-sm`}>
                   <div className="flex justify-between items-center mb-4">
                     <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
                       <CreditCard className="h-5 w-5 text-blue-600" /> Fee Payment History
@@ -512,7 +541,7 @@ export default function ParentDashboard() {
           </div>
         )}
 
-        <div className="mt-8 grid grid-cols-1 xl:grid-cols-[0.95fr_1.25fr] gap-6">
+        <div className={`mt-8 grid grid-cols-1 gap-6 xl:grid-cols-[0.95fr_1.25fr] ${activeTab === 'messages' ? '' : 'hidden'}`}>
           <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
             <h3 className="text-lg font-bold text-slate-800 mb-4">Messages</h3>
             <form onSubmit={handleCreateConversation} className="space-y-3 mb-5">

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { GraduationCap, LogOut, Award, CreditCard, User, AlertCircle, FileText, CheckCircle, Clock, Download, RefreshCw } from 'lucide-react';
+import { GraduationCap, LogOut, Award, CreditCard, User, AlertCircle, FileText, CheckCircle, Clock, Download, RefreshCw, Menu, X, BookOpen } from 'lucide-react';
 import API from '../opi';
 import { downloadReportCardPDF, downloadReceiptPDF, formatDateTime } from '../utils/pdfUtils';
 
@@ -9,7 +9,8 @@ export default function StudentDashboard() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [activeTab, setActiveTab] = useState('grades'); // 'grades' | 'payments'
+  const [activeTab, setActiveTab] = useState('overview');
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [verifyingRef, setVerifyingRef] = useState('');
   const [notification, setNotification] = useState({ type: '', text: '' });
   const [feeHistory, setFeeHistory] = useState([]);
@@ -109,6 +110,11 @@ export default function StudentDashboard() {
     navigate('/login');
   };
 
+  const handleTabSelect = (tab) => {
+    setActiveTab(tab);
+    setIsSidebarOpen(false);
+  };
+
   const showNotification = (type, text) => {
     setNotification({ type, text });
     setTimeout(() => setNotification({ type: '', text: '' }), 4000);
@@ -129,30 +135,52 @@ export default function StudentDashboard() {
     .sort((a, b) => new Date(a.event_date) - new Date(b.event_date));
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
-      {/* Top Navbar */}
-      <header className="bg-slate-900 text-white shadow-md">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
+    <div className="flex h-screen overflow-hidden bg-gray-100 font-sans">
+      {isSidebarOpen && (
+        <div onClick={() => setIsSidebarOpen(false)} className="fixed inset-0 z-30 bg-black/50 md:hidden" />
+      )}
+      <aside className={`fixed inset-y-0 left-0 z-40 flex w-64 shrink-0 flex-col overflow-y-auto bg-slate-900 p-4 text-white shadow-2xl transition-transform duration-300 md:static md:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+        <div className="flex items-center justify-between border-b border-slate-800 px-2 py-4">
           <div className="flex items-center gap-3">
-            <div className="bg-blue-600 rounded-full p-2">
-              <GraduationCap className="h-6 w-6 text-white" />
-            </div>
+            <GraduationCap className="h-8 w-8 text-blue-400" />
             <div>
-              <h1 className="text-lg font-bold">Student Portal</h1>
-              <p className="text-xs text-slate-400">Pinnacle Heights Academy</p>
+              <h1 className="text-base font-bold leading-tight">Pinnacle Heights</h1>
+              <p className="text-xs text-slate-400 leading-tight">Student Portal</p>
             </div>
           </div>
-          <button
-            onClick={handleLogout}
-            className="flex items-center gap-2 text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-2 rounded-lg transition"
-          >
+          <button onClick={() => setIsSidebarOpen(false)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white md:hidden" aria-label="Close sidebar">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        <nav className="mt-6 flex flex-col gap-2">
+          {[
+            { id: 'overview', label: 'Overview', Icon: GraduationCap },
+            { id: 'grades', label: 'Grades', Icon: FileText },
+            { id: 'materials', label: 'Learning Materials', Icon: BookOpen },
+            { id: 'payments', label: 'Payments', Icon: CreditCard }
+          ].map(({ id, label, Icon }) => (
+            <button key={id} onClick={() => handleTabSelect(id)} className={`flex items-center gap-3 rounded-lg px-4 py-3 text-left text-sm font-medium transition ${activeTab === id ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-slate-800'}`}>
+              <Icon className="h-5 w-5" /> {label}
+            </button>
+          ))}
+        </nav>
+        <div className="mt-auto space-y-2 border-t border-slate-800 pt-4">
+          <button onClick={handleLogout} className="flex w-full items-center gap-2 rounded px-2 py-2 text-xs text-red-400 transition hover:text-red-300">
             <LogOut className="h-4 w-4" /> Sign Out
           </button>
         </div>
-      </header>
+      </aside>
 
-      {/* Main Container */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 w-full">
+      <main className="flex-1 overflow-y-auto p-4 sm:p-8">
+        <header className="mb-6 flex items-center gap-3 rounded-xl border border-gray-200 bg-white p-4 shadow-sm sm:p-6">
+          <button onClick={() => setIsSidebarOpen(true)} className="rounded-lg bg-slate-100 p-2 text-slate-700 hover:bg-slate-200 md:hidden" aria-label="Open navigation menu">
+            <Menu className="h-5 w-5" />
+          </button>
+          <div>
+            <h2 className="text-xl font-bold capitalize text-gray-800">{activeTab === 'materials' ? 'Learning Materials' : `${activeTab} Portal`}</h2>
+            <p className="text-xs text-gray-500">Pinnacle Heights Academy — Student Dashboard</p>
+          </div>
+        </header>
         {notification.text && (
           <div className={`mb-6 p-4 rounded-xl text-sm font-medium ${
             notification.type === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-red-50 text-red-800 border border-red-200'
@@ -169,7 +197,7 @@ export default function StudentDashboard() {
         )}
 
         {/* Profile Banner */}
-        <div className="bg-gradient-to-r from-blue-700 to-indigo-800 rounded-2xl p-6 sm:p-8 text-white shadow-lg mb-8">
+        <div className={`${activeTab === 'overview' ? '' : 'hidden'} bg-gradient-to-r from-blue-700 to-indigo-800 rounded-2xl p-6 sm:p-8 text-white shadow-lg mb-8`}>
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <div>
               <span className="bg-blue-500/30 text-blue-100 text-xs font-semibold px-3 py-1 rounded-full uppercase tracking-wider">
@@ -191,7 +219,7 @@ export default function StudentDashboard() {
           </div>
         </div>
 
-        <div className="mb-8 grid grid-cols-1 xl:grid-cols-[1.4fr_0.6fr] gap-6">
+        <div className={`mb-8 grid grid-cols-1 gap-6 xl:grid-cols-[1.4fr_0.6fr] ${activeTab === 'overview' ? '' : 'hidden'}`}>
           <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
             <h3 className="text-lg font-bold text-slate-800 mb-3">School Announcements</h3>
             {announcements.length === 0 ? (
@@ -232,29 +260,6 @@ export default function StudentDashboard() {
               </div>
             )}
           </div>
-        </div>
-
-        <div className="flex gap-3 mb-6 border-b border-slate-200 pb-3">
-          <button
-            onClick={() => setActiveTab('grades')}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm transition ${
-              activeTab === 'grades'
-                ? 'bg-blue-600 text-white shadow'
-                : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
-            }`}
-          >
-            <FileText className="h-4 w-4" /> My Report Card & Grades
-          </button>
-          <button
-            onClick={() => setActiveTab('payments')}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm transition ${
-              activeTab === 'payments'
-                ? 'bg-blue-600 text-white shadow'
-                : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
-            }`}
-          >
-            <CreditCard className="h-4 w-4" /> My Fee Status
-          </button>
         </div>
 
         {/* Tab 1: Grades */}
@@ -319,7 +324,7 @@ export default function StudentDashboard() {
           </div>
         )}
 
-        <section className="mb-8 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm" aria-labelledby="learning-materials-heading">
+        <section className={`${activeTab === 'materials' ? '' : 'hidden'} mb-8 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm`} aria-labelledby="learning-materials-heading">
           <div className="mb-4 flex items-center gap-3">
             <div className="rounded-lg bg-emerald-50 p-2 text-emerald-700">
               <FileText className="h-5 w-5" />

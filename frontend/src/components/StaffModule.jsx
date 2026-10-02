@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { Plus, X, Calendar, User, Mail, BookOpen, CheckCircle, Copy, AlertCircle, ShieldCheck } from 'lucide-react';
+import { Plus, X, Calendar, User, Mail, BookOpen, CheckCircle, Copy, AlertCircle, ShieldCheck, Trash2 } from 'lucide-react';
 
-export default function StaffModule({ teachers, loading, onImportTeachers }) {
+export default function StaffModule({ teachers, loading, onImportTeachers, onDeleteTeacher }) {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [generatedResult, setGeneratedResult] = useState(null);
   const [copiedId, setCopiedId] = useState('');
@@ -66,6 +66,7 @@ export default function StaffModule({ teachers, loading, onImportTeachers }) {
                 <th className="pb-3 font-semibold">Date of Birth</th>
                 <th className="pb-3 font-semibold">Subjects Taught</th>
                 <th className="pb-3 font-semibold">Status</th>
+                <th className="pb-3 font-semibold">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 text-gray-700">
@@ -109,11 +110,16 @@ export default function StaffModule({ teachers, loading, onImportTeachers }) {
                         {teacher.is_registered || teacher.user_id ? 'Registered' : 'Pending Registration'}
                       </span>
                     </td>
+                    <td className="py-3">
+                      <button type="button" onClick={() => onDeleteTeacher(teacher)} title={`Delete ${teacher.full_name}`} aria-label={`Delete ${teacher.full_name}`} className="rounded p-1.5 text-red-600 hover:bg-red-50">
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </td>
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan="6" className="py-10 text-center text-gray-400">
+                  <td colSpan="7" className="py-10 text-center text-gray-400">
                     No staff records found in database. Click <strong>"Add Teacher"</strong> to enrol a teacher and generate a Staff ID.
                   </td>
                 </tr>

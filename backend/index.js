@@ -142,6 +142,13 @@ async function logActivity({ db = pool, actorId, actorName, actorRole, action, t
   }
 }
 
+async function reassignUserAuthorship(db, userId, adminId) {
+  await db.query('UPDATE conversations SET created_by = $1 WHERE created_by = $2', [adminId, userId]);
+  await db.query('UPDATE messages SET sender_id = $1 WHERE sender_id = $2', [adminId, userId]);
+  await db.query('UPDATE announcements SET created_by = $1 WHERE created_by = $2', [adminId, userId]);
+  await db.query('UPDATE materials SET uploaded_by = $1 WHERE uploaded_by = $2', [adminId, userId]);
+}
+
 async function ensureSchoolSchema() {
   try {
     await pool.query(`
@@ -1318,6 +1325,103 @@ app.get('/api/teachers', verifyToken, requireRole('ADMIN', 'SUPERADMIN'), async 
   }
 });
 
+app.delete('/api/admin/students/:id', verifyToken, requireRole('ADMIN', 'SUPERADMIN'), async (req, res) => {
+  const studentId = Number(req.params.id);
+  if (!Number.isInteger(studentId) || studentId <= 0) {
+    return res.status(400).json({ success: false, message: 'Student ID must be a positive integer.' });
+  }
+
+  try {
+    const result = await req.db.query(
+      `SELECT s.id, s.full_name, s.admission_number, s.user_id, u.role AS user_role
+       FROM students s
+       LEFT JOIN users u ON u.id = s.user_id
+       WHERE s.id = $1
+       FOR UPDATE OF s`,
+      [studentId]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Student not found.' });
+    }
+
+    const student = result.rows[0];
+    if (student.user_id && student.user_role !== 'STUDENT') {
+      return res.status(409).json({ success: false, message: 'The linked account is not a student account; no records were deleted.' });
+    }
+    if (student.user_id) {
+      await reassignUserAuthorship(req.db, student.user_id, req.user.id);
+    }
+
+    await req.db.query('DELETE FROM students WHERE id = $1', [studentId]);
+    if (student.user_id) {
+      await req.db.query('DELETE FROM users WHERE id = $1', [student.user_id]);
+    }
+
+    await logActivity({
+      db: req.db,
+      actorId: req.user.id,
+      actorName: req.user.email || 'Administrator',
+      actorRole: req.user.role,
+      action: 'Admin',
+      targetDescription: `Deleted student ${student.full_name} (${student.admission_number}); grades, fee payments, and parent links removed.`
+    });
+
+    res.json({ success: true, message: 'Student and linked account deleted successfully.' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Could not delete student.' });
+  }
+});
+
+app.delete('/api/admin/teachers/:id', verifyToken, requireRole('ADMIN', 'SUPERADMIN'), async (req, res) => {
+  const teacherRecordId = Number(req.params.id);
+  if (!Number.isInteger(teacherRecordId) || teacherRecordId <= 0) {
+    return res.status(400).json({ success: false, message: 'Teacher ID must be a positive integer.' });
+  }
+
+  try {
+    const result = await req.db.query(
+      `SELECT t.id, t.full_name, t.staff_id, t.user_id, u.role AS user_role
+       FROM teachers t
+       LEFT JOIN users u ON u.id = t.user_id
+       WHERE t.id = $1
+       FOR UPDATE OF t`,
+      [teacherRecordId]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Teacher not found.' });
+    }
+
+    const teacher = result.rows[0];
+    if (teacher.user_id) {
+      if (teacher.user_role !== 'TEACHER') {
+        return res.status(409).json({ success: false, message: 'The linked account is not a teacher account; no records were deleted.' });
+      }
+      if (Number(teacher.user_id) === Number(req.user.id)) {
+        return res.status(400).json({ success: false, message: 'You cannot delete your own account.' });
+      }
+      await reassignUserAuthorship(req.db, teacher.user_id, req.user.id);
+    }
+
+    await req.db.query('DELETE FROM teachers WHERE id = $1', [teacherRecordId]);
+    if (teacher.user_id) {
+      await req.db.query('DELETE FROM users WHERE id = $1', [teacher.user_id]);
+    }
+
+    await logActivity({
+      db: req.db,
+      actorId: req.user.id,
+      actorName: req.user.email || 'Administrator',
+      actorRole: req.user.role,
+      action: 'Admin',
+      targetDescription: `Deleted teacher ${teacher.full_name} (${teacher.staff_id}); authored conversations and materials reassigned to the administrator.`
+    });
+
+    res.json({ success: true, message: 'Teacher record and linked account deleted successfully.' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Could not delete teacher.' });
+  }
+});
+
 app.get('/api/parents', verifyToken, requireRole('ADMIN', 'SUPERADMIN'), async (req, res) => {
   try {
     const parents = await req.db.query(
@@ -1582,7 +1686,7 @@ app.get('/api/admin/export/students', verifyToken, requireRole('ADMIN', 'SUPERAD
              COALESCE(u.email, '') AS registered_email,
              COALESCE(
                (
-                 SELECT string_agg(DISTINCT p.full_name || ' <' || p.email || '>', '; ' ORDER BY p.full_name)
+                 SELECT string_agg(DISTINCT p.full_name || ' <' || p.email || '>', '; ')
                  FROM parent_student_links psl
                  JOIN users p ON p.id = psl.parent_user_id
                  WHERE psl.student_id = s.id
@@ -1612,6 +1716,11 @@ app.get('/api/admin/export/students', verifyToken, requireRole('ADMIN', 'SUPERAD
 
 app.get('/api/admin/export/grades', verifyToken, requireRole('ADMIN', 'SUPERADMIN'), async (req, res) => {
   try {
+    const classId = req.query.classId ? Number(req.query.classId) : null;
+    if (classId !== null && (!Number.isInteger(classId) || classId <= 0)) {
+      return res.status(400).json({ success: false, message: 'classId must be a positive integer.' });
+    }
+
     const rows = await req.db.query(`
       SELECT s.full_name AS student_name,
              s.admission_number,
@@ -1625,8 +1734,9 @@ app.get('/api/admin/export/grades', verifyToken, requireRole('ADMIN', 'SUPERADMI
       FROM report_cards rc
       JOIN students s ON s.id = rc.student_id
       LEFT JOIN classes c ON c.id = s.class_id
+      WHERE ($1::int IS NULL OR s.class_id = $1::int)
       ORDER BY rc.created_at DESC
-    `);
+    `, [classId]);
     const csv = toCsv(rows.rows);
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', 'attachment; filename="grades-export.csv"');

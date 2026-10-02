@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { GraduationCap, LogOut, FileText, CheckCircle, AlertCircle, Users, BookOpen, Plus, Download, MessageSquareText, Share2 } from 'lucide-react';
+import { GraduationCap, LogOut, FileText, CheckCircle, AlertCircle, Users, BookOpen, Plus, Download, MessageSquareText, Share2, Trash2, Pencil, Menu, X } from 'lucide-react';
 import API from '../opi';
 import { downloadGradeSheetPDF } from '../utils/pdfUtils';
 import MaterialsManager from './MaterialsManager';
@@ -16,7 +16,9 @@ export default function TeacherDashboard() {
   const [loading, setLoading] = useState(false);
   const [notification, setNotification] = useState({ type: '', text: '' });
   const [selectedStudentId, setSelectedStudentId] = useState('');
-  const [activeTab, setActiveTab] = useState('grades');
+  const [editingGradeId, setEditingGradeId] = useState(null);
+  const [activeTab, setActiveTab] = useState('overview');
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [reportData, setReportData] = useState(null);
   const [announcements, setAnnouncements] = useState([]);
   const [conversations, setConversations] = useState([]);
@@ -109,19 +111,32 @@ export default function TeacherDashboard() {
     navigate('/login');
   };
 
+  const handleTabSelect = (tab) => {
+    setActiveTab(tab);
+    setIsSidebarOpen(false);
+  };
+
   const handleGradeSubmit = async (e) => {
     e.preventDefault();
     try {
-      await API.post('/report-cards', {
-        ...gradeForm,
-        studentId: Number(gradeForm.studentId),
+      const scores = {
         caScore: Number(gradeForm.caScore),
         examScore: Number(gradeForm.examScore)
-      });
-      showNotification('success', 'Assessment grade recorded successfully!');
+      };
+      if (editingGradeId) {
+        await API.patch(`/report-cards/${editingGradeId}`, scores);
+      } else {
+        await API.post('/report-cards', {
+          ...gradeForm,
+          studentId: Number(gradeForm.studentId),
+          ...scores
+        });
+      }
+      showNotification('success', editingGradeId ? 'Assessment grade updated successfully!' : 'Assessment grade recorded successfully!');
       if (gradeForm.studentId === selectedStudentId) {
         fetchStudentReport(gradeForm.studentId);
       }
+      setEditingGradeId(null);
       setGradeForm({
         ...gradeForm,
         caScore: '',
@@ -255,31 +270,54 @@ export default function TeacherDashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
-      {/* Top Navbar */}
-      <header className="bg-slate-900 text-white shadow-md">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
+    <div className="flex h-screen overflow-hidden bg-gray-100 font-sans">
+      {isSidebarOpen && (
+        <div onClick={() => setIsSidebarOpen(false)} className="fixed inset-0 z-30 bg-black/50 md:hidden" />
+      )}
+      <aside className={`fixed inset-y-0 left-0 z-40 flex w-64 shrink-0 flex-col overflow-y-auto bg-slate-900 p-4 text-white shadow-2xl transition-transform duration-300 md:static md:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+        <div className="flex items-center justify-between border-b border-slate-800 px-2 py-4">
           <div className="flex items-center gap-3">
-            <div className="bg-blue-600 rounded-full p-2">
-              <GraduationCap className="h-6 w-6 text-white" />
-            </div>
+            <GraduationCap className="h-8 w-8 text-blue-400" />
             <div>
-              <h1 className="text-lg font-bold">Teacher Grading Portal</h1>
-              <p className="text-xs text-slate-400">Pinnacle Heights Academy</p>
+              <h1 className="text-base font-bold leading-tight">Pinnacle Heights</h1>
+              <p className="text-xs text-slate-400 leading-tight">Teacher Portal</p>
             </div>
           </div>
-          <button
-            onClick={handleLogout}
-            className="flex items-center gap-2 text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-2 rounded-lg transition"
-          >
+          <button onClick={() => setIsSidebarOpen(false)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white md:hidden" aria-label="Close sidebar">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        <nav className="mt-6 flex flex-col gap-2">
+          {[
+            { id: 'overview', label: 'Overview', Icon: GraduationCap },
+            { id: 'grades', label: 'Grades', Icon: FileText },
+            { id: 'messages', label: 'Messages', Icon: MessageSquareText },
+            { id: 'materials', label: 'Share Materials', Icon: Share2 }
+          ].map(({ id, label, Icon }) => (
+            <button key={id} onClick={() => handleTabSelect(id)} className={`flex items-center gap-3 rounded-lg px-4 py-3 text-left text-sm font-medium transition ${activeTab === id ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-slate-800'}`}>
+              <Icon className="h-5 w-5" /> {label}
+            </button>
+          ))}
+        </nav>
+        <div className="mt-auto space-y-2 border-t border-slate-800 pt-4">
+          <button onClick={handleLogout} className="flex w-full items-center gap-2 rounded px-2 py-2 text-xs text-red-400 transition hover:text-red-300">
             <LogOut className="h-4 w-4" /> Sign Out
           </button>
         </div>
-      </header>
+      </aside>
 
-      {/* Main Container */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 w-full">
-        <div className="mb-8 grid grid-cols-1 xl:grid-cols-[1.4fr_0.6fr] gap-6">
+      <main className="flex-1 overflow-y-auto p-4 sm:p-8">
+        <header className="mb-6 flex items-center gap-3 rounded-xl border border-gray-200 bg-white p-4 shadow-sm sm:p-6">
+          <button onClick={() => setIsSidebarOpen(true)} className="rounded-lg bg-slate-100 p-2 text-slate-700 hover:bg-slate-200 md:hidden" aria-label="Open navigation menu">
+            <Menu className="h-5 w-5" />
+          </button>
+          <div>
+            <h2 className="text-xl font-bold capitalize text-gray-800">{activeTab} Portal</h2>
+            <p className="text-xs text-gray-500">Pinnacle Heights Academy — Teacher Dashboard</p>
+          </div>
+        </header>
+
+        <div className={`mb-8 grid grid-cols-1 gap-6 xl:grid-cols-[1.4fr_0.6fr] ${activeTab === 'overview' ? '' : 'hidden'}`}>
           <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
             <h3 className="text-lg font-bold text-slate-800 mb-3">School Announcements</h3>
             {announcements.length === 0 ? (
@@ -329,27 +367,6 @@ export default function TeacherDashboard() {
             {notification.text}
           </div>
         )}
-
-        <div className="flex gap-3 mb-6 border-b border-slate-200 pb-3">
-          <button
-            onClick={() => setActiveTab('grades')}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm transition ${activeTab === 'grades' ? 'bg-blue-600 text-white shadow' : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'}`}
-          >
-            <FileText className="h-4 w-4" /> Grades
-          </button>
-          <button
-            onClick={() => setActiveTab('messages')}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm transition ${activeTab === 'messages' ? 'bg-blue-600 text-white shadow' : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'}`}
-          >
-            <MessageSquareText className="h-4 w-4" /> Messages
-          </button>
-          <button
-            onClick={() => setActiveTab('materials')}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm transition ${activeTab === 'materials' ? 'bg-blue-600 text-white shadow' : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'}`}
-          >
-            <Share2 className="h-4 w-4" /> Share Materials
-          </button>
-        </div>
 
         {activeTab === 'grades' && (
           <>
@@ -437,7 +454,6 @@ export default function TeacherDashboard() {
                     step="0.1"
                     value={gradeForm.caScore}
                     onChange={(e) => setGradeForm({ ...gradeForm, caScore: e.target.value })}
-                    required
                     placeholder="35"
                     className="w-full p-2.5 border border-slate-300 rounded-lg text-sm"
                   />
@@ -452,7 +468,6 @@ export default function TeacherDashboard() {
                     step="0.1"
                     value={gradeForm.examScore}
                     onChange={(e) => setGradeForm({ ...gradeForm, examScore: e.target.value })}
-                    required
                     placeholder="52"
                     className="w-full p-2.5 border border-slate-300 rounded-lg text-sm"
                   />
@@ -463,8 +478,14 @@ export default function TeacherDashboard() {
                 type="submit"
                 className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2.5 rounded-lg text-sm transition shadow flex items-center justify-center gap-2 mt-4"
               >
-                <Plus className="h-4 w-4" /> Save Grade Record
+                {editingGradeId ? <Pencil className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+                {editingGradeId ? 'Update Grade Record' : 'Save Grade Record'}
               </button>
+              {editingGradeId && (
+                <button type="button" onClick={() => setEditingGradeId(null)} className="w-full rounded-lg border border-slate-300 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">
+                  Cancel Edit
+                </button>
+              )}
             </form>
           </div>
 
@@ -553,14 +574,16 @@ export default function TeacherDashboard() {
                           <td className="py-2.5">
                             <div className="flex gap-2">
                               <button type="button" onClick={() => {
+                                setEditingGradeId(r.id);
                                 setGradeForm({
                                   ...gradeForm,
+                                  studentId: String(selectedStudentId),
                                   subject: r.subject,
                                   term: r.term,
                                   caScore: String(r.ca_score ?? ''),
                                   examScore: String(r.exam_score ?? '')
                                 });
-                              }} className="border border-slate-300 rounded p-1" title="Edit grade"><Plus className="h-3.5 w-3.5" /></button>
+                              }} className="border border-slate-300 rounded p-1" title="Edit grade"><Pencil className="h-3.5 w-3.5" /></button>
                               <button type="button" onClick={async () => {
                                 const ok = window.confirm(`Remove ${r.subject} for ${r.term}? This cannot be undone.`);
                                 if (!ok) return;

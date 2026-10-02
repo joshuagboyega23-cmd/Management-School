@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { Plus, X, Calendar, User, Phone, GraduationCap } from 'lucide-react';
+import { Plus, X, Calendar, User, Phone, GraduationCap, Trash2 } from 'lucide-react';
 
-export default function StudentsModule({ students, loading, onAddStudent }) {
+export default function StudentsModule({ students, loading, onAddStudent, onDeleteStudent }) {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [studentForm, setStudentForm] = useState({
     fullName: '',
@@ -46,6 +46,7 @@ export default function StudentsModule({ students, loading, onAddStudent }) {
                 <th className="pb-3 font-semibold">Date of Birth</th>
                 <th className="pb-3 font-semibold">Guardian Phone</th>
                 <th className="pb-3 font-semibold">Status</th>
+                <th className="pb-3 font-semibold">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 text-gray-700">
@@ -66,11 +67,16 @@ export default function StudentsModule({ students, loading, onAddStudent }) {
                         {student.user_id ? 'Claimed' : 'Pre-Enrolled'}
                       </span>
                     </td>
+                    <td className="py-3">
+                      <button type="button" onClick={() => onDeleteStudent(student)} title={`Delete ${student.name}`} aria-label={`Delete ${student.name}`} className="rounded p-1.5 text-red-600 hover:bg-red-50">
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </td>
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan="6" className="py-10 text-center text-gray-400">
+                  <td colSpan="7" className="py-10 text-center text-gray-400">
                     No student records found in database. Click <strong>"Enrol New Student"</strong> to add the first record.
                   </td>
                 </tr>

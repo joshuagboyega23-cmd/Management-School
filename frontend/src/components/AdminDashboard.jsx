@@ -51,6 +51,7 @@ export default function AdminDashboard() {
   const [activityFilter, setActivityFilter] = useState('All');
   const [promotionForm, setPromotionForm] = useState({ fromClassId: '', toClassId: '', confirmText: '' });
   const [promotionSummary, setPromotionSummary] = useState(null);
+  const [exportClassId, setExportClassId] = useState('');
   const [newMessageForm, setNewMessageForm] = useState({
     target_role: 'PARENT',
     audience: { mode: 'ALL', classIds: [], userIds: [] },
@@ -94,6 +95,40 @@ export default function AdminDashboard() {
       setParents(Array.isArray(res.data?.data) ? res.data.data : []);
     } catch (err) {
       setParents([]);
+    }
+  };
+
+  const handleDeleteStudent = async (student) => {
+    const linkedAccount = student.user_id ? ' their linked student login,' : '';
+    const confirmed = window.confirm(
+      `Permanently delete ${student.name}? This removes the student record,${linkedAccount} grades, fee/payment history, and parent links. Authored conversations and materials will be reassigned to your administrator account. This cannot be undone.`
+    );
+    if (!confirmed) return;
+    try {
+      await API.delete(`/admin/students/${student.id}`);
+      showNotification('success', `${student.name} was deleted.`);
+      fetchStudents();
+      fetchActivityLog();
+    } catch (err) {
+      showNotification('error', err.response?.data?.message || 'Could not delete student.');
+    }
+  };
+
+  const handleDeleteTeacher = async (teacher) => {
+    const accountImpact = teacher.user_id
+      ? 'their linked teacher login and payroll/password-reset records, '
+      : '';
+    const confirmed = window.confirm(
+      `Permanently delete ${teacher.full_name}? This removes the teacher record, ${accountImpact}and reassigns authored conversations, messages, announcements, and uploaded materials to your administrator account. This cannot be undone.`
+    );
+    if (!confirmed) return;
+    try {
+      await API.delete(`/admin/teachers/${teacher.teacher_record_id}`);
+      showNotification('success', `${teacher.full_name} was deleted.`);
+      fetchTeachers();
+      fetchActivityLog();
+    } catch (err) {
+      showNotification('error', err.response?.data?.message || 'Could not delete teacher.');
     }
   };
 
@@ -429,9 +464,9 @@ export default function AdminDashboard() {
     }
   };
 
-  const handleExportCsv = async (endpoint, filename) => {
+  const handleExportCsv = async (endpoint, filename, params = {}) => {
     try {
-      const res = await API.get(endpoint, { responseType: 'blob' });
+      const res = await API.get(endpoint, { params, responseType: 'blob' });
       const blob = new Blob([res.data], { type: 'text/csv;charset=utf-8;' });
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -497,7 +532,7 @@ export default function AdminDashboard() {
       )}
 
       {/* Sidebar Navigation */}
-      <aside className={`fixed inset-y-0 left-0 z-40 w-64 bg-slate-900 text-white flex flex-col p-4 shadow-2xl md:shadow-lg shrink-0 transition-transform duration-300 ease-in-out md:static md:translate-x-0 ${
+      <aside className={`fixed inset-y-0 left-0 z-40 w-64 overflow-y-auto bg-slate-900 text-white flex flex-col p-4 shadow-2xl md:shadow-lg shrink-0 transition-transform duration-300 ease-in-out md:static md:translate-x-0 ${
         isSidebarOpen ? 'translate-x-0' : '-translate-x-full'
       }`}>
         <div className="flex items-center justify-between px-2 py-4 border-b border-slate-800">
@@ -644,6 +679,7 @@ export default function AdminDashboard() {
             students={students} 
             loading={loading} 
             onAddStudent={handleAddStudent} 
+            onDeleteStudent={handleDeleteStudent}
           />
         )}
 
@@ -653,6 +689,7 @@ export default function AdminDashboard() {
               teachers={teachers} 
               loading={loadingStaff} 
               onImportTeachers={handleImportTeachers} 
+              onDeleteTeacher={handleDeleteTeacher}
             />
 
             <div className="mt-8 max-w-xl rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -942,11 +979,20 @@ export default function AdminDashboard() {
         {activeTab === 'export-data' && (
           <div className="max-w-2xl rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
             <h3 className="mb-4 text-lg font-bold text-slate-800">Export Data</h3>
+            <div className="mb-4 max-w-sm">
+              <label htmlFor="grades-export-class" className="mb-1 block text-xs font-semibold text-slate-600">Filter by Class</label>
+              <select id="grades-export-class" value={exportClassId} onChange={(e) => setExportClassId(e.target.value)} className="w-full rounded-lg border border-slate-300 bg-white p-2.5 text-sm">
+                <option value="">All Classes</option>
+                {classOptions.map((classItem) => (
+                  <option key={classItem.id} value={classItem.id}>{classItem.name}</option>
+                ))}
+              </select>
+            </div>
             <div className="grid gap-3 sm:grid-cols-3">
               <button type="button" onClick={() => handleExportCsv('/admin/export/students', 'students-export.csv')} className="flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-100">
                 <Download className="h-4 w-4" /> Students
               </button>
-              <button type="button" onClick={() => handleExportCsv('/admin/export/grades', 'grades-export.csv')} className="flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-100">
+              <button type="button" onClick={() => handleExportCsv('/admin/export/grades', 'grades-export.csv', exportClassId ? { classId: exportClassId } : {})} className="flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-100">
                 <Download className="h-4 w-4" /> Grades
               </button>
               <button type="button" onClick={() => handleExportCsv('/admin/export/payments', 'payments-export.csv')} className="flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-100">
