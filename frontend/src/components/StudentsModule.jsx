@@ -1,5 +1,122 @@
 import React, { useState } from 'react';
-import { Plus, X, Calendar, User, Phone, GraduationCap, Trash2 } from 'lucide-react';
+import { Plus, X, Calendar, User, Phone, GraduationCap, Trash2, Upload, CheckCircle, Download } from 'lucide-react';
+import * as XLSX from 'xlsx';
+import API from '../opi';
+
+const normalizeHeader = (value = '') => String(value).trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+
+const firstNonEmpty = (...values) => values.find((value) => String(value ?? '').trim() !== '');
+
+const toIsoDate = (value) => {
+  if (!value && value !== 0) return '';
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+
+  if (typeof value === 'number') {
+    const parsed = XLSX.SSF.parse_date_code(value);
+    if (parsed && parsed.y) {
+      const month = String(parsed.m || 1).padStart(2, '0');
+      const day = String(parsed.d || 1).padStart(2, '0');
+      return `${parsed.y}-${month}-${day}`;
+    }
+
+    const fallback = new Date(Math.round((value - 25569) * 86400 * 1000));
+    if (!Number.isNaN(fallback.getTime())) {
+      return fallback.toISOString().slice(0, 10);
+    }
+    return '';
+  }
+
+  const text = String(value).trim();
+  if (!text) return '';
+
+  const asDate = new Date(text);
+  if (!Number.isNaN(asDate.getTime())) {
+    return asDate.toISOString().slice(0, 10);
+  }
+
+  return text;
+};
+
+const normalizeStudentImportRow = (rawRow = {}) => {
+  const normalized = Object.entries(rawRow).reduce((acc, [key, value]) => {
+    acc[normalizeHeader(key)] = value;
+    return acc;
+  }, {});
+
+  const fullName = firstNonEmpty(
+    normalized.fullname,
+    normalized.studentfullname,
+    normalized.name,
+    normalized.studentname,
+    normalized.fullnames,
+    normalized.fullname1
+  );
+
+  const dateOfBirth = firstNonEmpty(
+    normalized.dateofbirth,
+    normalized.dob,
+    normalized.birthdate,
+    normalized.dateofbirths,
+    normalized.studentdob,
+    normalized.birthday
+  );
+
+  const className = firstNonEmpty(
+    normalized.classname,
+    normalized.class,
+    normalized.studentclass,
+    normalized.level,
+    normalized.classlevel,
+    normalized.grade
+  );
+
+  return {
+    fullName: String(fullName ?? '').trim(),
+    dateOfBirth: toIsoDate(dateOfBirth),
+    className: String(className ?? '').trim()
+  };
+};
+
+const escapeCsvValue = (value = '') => `"${String(value).replace(/"/g, '""')}"`;
+
+const parseExcelOrCsvFile = (file) => new Promise((resolve, reject) => {
+  if (!file) {
+    reject(new Error('Please select a spreadsheet or CSV file.'));
+    return;
+  }
+
+  const fileName = String(file.name || '').toLowerCase();
+  const isCsv = fileName.endsWith('.csv');
+
+  const reader = new FileReader();
+  reader.onload = (event) => {
+    try {
+      const binaryData = event.target?.result;
+      const workbook = XLSX.read(binaryData, {
+        type: isCsv ? 'string' : 'array',
+        cellDates: true,
+        raw: false
+      });
+      const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(firstSheet, { defval: '', raw: false });
+      const parsedRows = rows
+        .map((row) => normalizeStudentImportRow(row))
+        .filter((row) => row.fullName || row.dateOfBirth || row.className);
+
+      resolve(parsedRows);
+    } catch (error) {
+      reject(error);
+    }
+  };
+
+  reader.onerror = () => reject(new Error('Could not read the selected file.'));
+
+  if (isCsv) {
+    reader.readAsText(file);
+  } else {
+    reader.readAsArrayBuffer(file);
+  }
+});
 
 export default function StudentsModule({ students, loading, onAddStudent, onDeleteStudent }) {
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -9,6 +126,10 @@ export default function StudentsModule({ students, loading, onAddStudent, onDele
     className: 'JSS 1',
     guardianPhone: ''
   });
+  const [importRows, setImportRows] = useState([]);
+  const [importError, setImportError] = useState('');
+  const [importing, setImporting] = useState(false);
+  const [importResults, setImportResults] = useState([]);
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -16,6 +137,115 @@ export default function StudentsModule({ students, loading, onAddStudent, onDele
       setIsModalOpen(false);
       setStudentForm({ fullName: '', dateOfBirth: '', className: 'JSS 1', guardianPhone: '' });
     });
+  };
+
+  const handleImportFile = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setImportError('');
+    setImportResults([]);
+
+    try {
+      const parsedRows = await parseExcelOrCsvFile(file);
+      if (parsedRows.length === 0) {
+        setImportRows([]);
+        setImportError('No usable student rows were found. Check the file headers and make sure the spreadsheet includes name, DOB, and class columns.');
+        return;
+      }
+
+      setImportRows(parsedRows);
+    } catch (error) {
+      setImportRows([]);
+      setImportError(error.message || 'The selected spreadsheet could not be parsed.');
+    } finally {
+      event.target.value = '';
+    }
+  };
+
+  const handleBulkImport = async () => {
+    if (!importRows.length) return;
+
+    const invalidRows = importRows
+      .map((row, index) => ({ ...row, index }))
+      .filter((row) => !row.fullName || !row.dateOfBirth || !row.className);
+
+    if (invalidRows.length > 0) {
+      const firstInvalid = invalidRows[0];
+      setImportError(`Row ${firstInvalid.index + 2} is missing a required full name, date of birth, or class.`);
+      setImportResults(
+        invalidRows.map((row) => ({
+          name: row.fullName || `Row ${row.index + 2}`,
+          admissionNumber: '',
+          status: 'failed',
+          reason: 'Missing required full name, date of birth, or class.'
+        }))
+      );
+      return;
+    }
+
+    setImporting(true);
+    setImportError('');
+
+    try {
+      const payload = importRows.map((row) => ({
+        fullName: row.fullName,
+        dateOfBirth: row.dateOfBirth,
+        className: row.className
+      }));
+
+      const response = await API.post('/auth/admin/import-students', payload);
+      const importedStudents = Array.isArray(response.data?.students) ? response.data.students : [];
+
+      const results = payload.map((row, index) => {
+        const created = importedStudents[index];
+        return {
+          name: row.fullName,
+          admissionNumber: created?.admission_number || '',
+          status: created ? 'success' : 'failed',
+          reason: created ? '' : 'Import response missing this record.'
+        };
+      });
+
+      setImportResults(results);
+      setImportRows([]);
+    } catch (error) {
+      const message = error.response?.data?.message || error.response?.data?.error || 'Bulk student import failed.';
+      setImportError(message);
+      setImportResults(
+        importRows.map((row) => ({
+          name: row.fullName,
+          admissionNumber: '',
+          status: 'failed',
+          reason: message
+        }))
+      );
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const handleDownloadImportResults = () => {
+    if (!importResults.length) return;
+
+    const csvRows = [
+      ['Name', 'Admission Number', 'Status', 'Reason'],
+      ...importResults.map((row) => [row.name, row.admissionNumber, row.status, row.reason])
+    ];
+
+    const csvContent = csvRows
+      .map((row) => row.map((cell) => escapeCsvValue(cell)).join(','))
+      .join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'student-admission-results.csv';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
   };
 
   return (
@@ -31,6 +261,118 @@ export default function StudentsModule({ students, loading, onAddStudent, onDele
         >
           <Plus className="h-4 w-4" /> Enrol New Student
         </button>
+      </div>
+
+      <div className="mb-8 rounded-2xl border border-dashed border-blue-200 bg-blue-50/60 p-5">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h4 className="text-base font-bold text-slate-800">Import Students</h4>
+            <p className="text-xs text-slate-600">Upload .xlsx, .xls, or .csv files and review the first 10 rows before submitting.</p>
+          </div>
+          <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-xs font-semibold text-white shadow hover:bg-blue-700">
+            <Upload className="h-4 w-4" />
+            Choose Spreadsheet
+            <input type="file" accept=".xlsx,.xls,.csv" onChange={handleImportFile} className="hidden" />
+          </label>
+        </div>
+
+        {importError && (
+          <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-700">
+            {importError}
+          </div>
+        )}
+
+        {importRows.length > 0 && (
+          <div className="mt-5 space-y-4">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-xs font-medium text-slate-600">Previewing the first 10 parsed rows</p>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setImportRows([])}
+                  className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                >
+                  Clear
+                </button>
+                <button
+                  type="button"
+                  onClick={handleBulkImport}
+                  disabled={importing}
+                  className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                >
+                  {importing ? 'Importing...' : 'Submit Imported Students'}
+                </button>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto rounded-lg border border-slate-200">
+              <table className="min-w-full text-left text-sm">
+                <thead className="bg-slate-100 text-slate-700">
+                  <tr>
+                    <th className="px-3 py-2 font-semibold">#</th>
+                    <th className="px-3 py-2 font-semibold">Full Name</th>
+                    <th className="px-3 py-2 font-semibold">Date of Birth</th>
+                    <th className="px-3 py-2 font-semibold">Class</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200 bg-white text-slate-700">
+                  {importRows.slice(0, 10).map((row, index) => (
+                    <tr key={`${row.fullName || 'row'}-${index}`}>
+                      <td className="px-3 py-2 text-slate-500">{index + 1}</td>
+                      <td className="px-3 py-2 font-medium">{row.fullName || '—'}</td>
+                      <td className="px-3 py-2">{row.dateOfBirth || '—'}</td>
+                      <td className="px-3 py-2">{row.className || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {importResults.length > 0 && (
+          <div className="mt-5 space-y-4">
+            <div className="flex items-center justify-between gap-3">
+              <h5 className="text-sm font-bold text-slate-800">Import Results</h5>
+              <button
+                type="button"
+                onClick={handleDownloadImportResults}
+                className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                <Download className="h-3.5 w-3.5" /> Download Results as CSV
+              </button>
+            </div>
+
+            <div className="overflow-x-auto rounded-lg border border-slate-200">
+              <table className="min-w-full text-left text-sm">
+                <thead className="bg-slate-100 text-slate-700">
+                  <tr>
+                    <th className="px-3 py-2 font-semibold">Student Name</th>
+                    <th className="px-3 py-2 font-semibold">Admission Number</th>
+                    <th className="px-3 py-2 font-semibold">Status</th>
+                    <th className="px-3 py-2 font-semibold">Reason</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200 bg-white text-slate-700">
+                  {importResults.map((result, index) => (
+                    <tr key={`${result.name || 'result'}-${index}`}>
+                      <td className="px-3 py-2 font-medium">{result.name}</td>
+                      <td className="px-3 py-2 font-mono text-xs text-blue-700">{result.admissionNumber || '—'}</td>
+                      <td className="px-3 py-2">
+                        <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                          result.status === 'success' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
+                        }`}>
+                          {result.status === 'success' ? 'Success' : 'Failed'}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 text-xs text-slate-600">{result.reason || 'Imported successfully.'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
 
       {loading ? (
