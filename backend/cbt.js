@@ -95,9 +95,9 @@ const requireRole = (...roles) => {
 // Authentication middleware for all CBT routes
 router.use(verifyToken);
 
-// Role gate: /student/* routes require STUDENT role; other CBT routes require TEACHER, ADMIN, or SUPERADMIN
+// Role gate: /student/* and /my-attempts/* routes require STUDENT role; other CBT routes require TEACHER, ADMIN, or SUPERADMIN
 router.use((req, res, next) => {
-  if (req.path.startsWith('/student')) {
+  if (req.path.startsWith('/student') || req.path.startsWith('/my-attempts')) {
     if (!req.user || req.user.role !== 'STUDENT') {
       return res.status(403).json({ success: false, message: 'Access denied. Student portal only.' });
     }
@@ -251,7 +251,7 @@ router.get('/exams/template', (req, res) => {
 // Create an Exam (while status is DRAFT)
 router.post('/exams', async (req, res) => {
   try {
-    const { title, subject, term, class_id, duration_minutes, total_marks, shuffle } = req.body;
+    const { title, subject, term, class_id, duration_minutes, total_marks, shuffle, max_leaves } = req.body;
 
     if (!title || !String(title).trim()) {
       return res.status(400).json({ success: false, message: 'Exam title is required.' });
@@ -279,6 +279,15 @@ router.post('/exams', async (req, res) => {
 
     const shuffleVal = shuffle !== undefined ? Boolean(shuffle) : true;
 
+    let maxLeavesVal = 3;
+    if (max_leaves !== undefined) {
+      const parsedLeaves = Number(max_leaves);
+      if (!Number.isInteger(parsedLeaves) || parsedLeaves < 1 || parsedLeaves > 20) {
+        return res.status(400).json({ success: false, message: 'max_leaves must be an integer between 1 and 20.' });
+      }
+      maxLeavesVal = parsedLeaves;
+    }
+
     // Validate class existence & teacher assignment
     const classResult = await req.db.query(
       'SELECT id, name, homeroom_teacher_id FROM classes WHERE id = $1',
@@ -295,8 +304,8 @@ router.post('/exams', async (req, res) => {
     }
 
     const insertResult = await req.db.query(
-      `INSERT INTO exams (title, subject, term, class_id, created_by, duration_minutes, total_marks, shuffle, status, questions_locked)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'DRAFT', FALSE)
+      `INSERT INTO exams (title, subject, term, class_id, created_by, duration_minutes, total_marks, shuffle, max_leaves, status, questions_locked)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'DRAFT', FALSE)
        RETURNING *`,
       [
         String(title).trim(),
@@ -306,7 +315,8 @@ router.post('/exams', async (req, res) => {
         req.user.id,
         duration,
         marks,
-        shuffleVal
+        shuffleVal,
+        maxLeavesVal
       ]
     );
 
@@ -425,7 +435,7 @@ router.put('/exams/:id', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Only DRAFT exams can be edited.' });
     }
 
-    const { title, subject, term, class_id, duration_minutes, total_marks, shuffle } = req.body;
+    const { title, subject, term, class_id, duration_minutes, total_marks, shuffle, max_leaves } = req.body;
 
     let targetClassId = exam.class_id;
     if (class_id !== undefined) {
@@ -468,6 +478,15 @@ router.put('/exams/:id', async (req, res) => {
       targetMarks = parsedMarks;
     }
 
+    let targetMaxLeaves = exam.max_leaves !== undefined ? exam.max_leaves : 3;
+    if (max_leaves !== undefined) {
+      const parsedLeaves = Number(max_leaves);
+      if (!Number.isInteger(parsedLeaves) || parsedLeaves < 1 || parsedLeaves > 20) {
+        return res.status(400).json({ success: false, message: 'max_leaves must be an integer between 1 and 20.' });
+      }
+      targetMaxLeaves = parsedLeaves;
+    }
+
     const targetTitle = title !== undefined ? String(title).trim() : exam.title;
     const targetSubject = subject !== undefined ? String(subject).trim() : exam.subject;
     const targetTerm = term !== undefined ? String(term).trim() : exam.term;
@@ -491,10 +510,11 @@ router.put('/exams/:id', async (req, res) => {
            class_id = $4,
            duration_minutes = $5,
            total_marks = $6,
-           shuffle = $7
-       WHERE id = $8
+           shuffle = $7,
+           max_leaves = $8
+       WHERE id = $9
        RETURNING *`,
-      [targetTitle, targetSubject, targetTerm, targetClassId, targetDuration, targetMarks, targetShuffle, exam.id]
+      [targetTitle, targetSubject, targetTerm, targetClassId, targetDuration, targetMarks, targetShuffle, targetMaxLeaves, exam.id]
     );
 
     return res.json({
@@ -1245,6 +1265,36 @@ async function checkBatchAccess(req, batchId) {
   return { batch };
 }
 
+// Helper: Check teacher/admin permissions on an attempt
+async function checkAttemptStaffAccess(req, attemptId) {
+  const result = await req.db.query(
+    `SELECT a.*, e.created_by, e.class_id, c.homeroom_teacher_id
+     FROM attempts a
+     JOIN exams e ON e.id = a.exam_id
+     JOIN classes c ON c.id = e.class_id
+     WHERE a.id = $1`,
+    [Number(attemptId)]
+  );
+
+  if (result.rows.length === 0) {
+    return { error: { status: 404, message: 'Exam attempt not found.' } };
+  }
+
+  const attempt = result.rows[0];
+  const isAdmin = ['ADMIN', 'SUPERADMIN'].includes(req.user.role);
+
+  if (!isAdmin) {
+    if (Number(attempt.created_by) !== Number(req.user.id)) {
+      return { error: { status: 403, message: 'Access denied: You can only manage attempts for your own exams.' } };
+    }
+    if (attempt.homeroom_teacher_id && Number(attempt.homeroom_teacher_id) !== Number(req.user.id)) {
+      return { error: { status: 403, message: 'Access denied: You can only manage attempts for classes you teach.' } };
+    }
+  }
+
+  return { attempt };
+}
+
 // =============================================================
 // BATCH ROUTES
 // =============================================================
@@ -1676,6 +1726,91 @@ const unlockStudentHandler = async (req, res) => {
 
 router.post('/exams/:id/unlock-student', unlockStudentHandler);
 router.post('/batches/:batchId/unlock-student', unlockStudentHandler);
+
+// 6. GET live alerts for a batch (TEACHER, ADMIN, SUPERADMIN)
+const getBatchAlertsHandler = async (req, res) => {
+  try {
+    const batchId = Number(req.params.batchId);
+    if (!batchId || !Number.isInteger(batchId) || batchId <= 0) {
+      return res.status(400).json({ success: false, message: 'Valid batchId is required.' });
+    }
+
+    const { batch, error } = await checkBatchAccess(req, batchId);
+    if (error) return res.status(error.status).json({ success: false, message: error.message });
+
+    const since = req.query.since ? Math.max(0, parseInt(req.query.since, 10) || 0) : 0;
+
+    const alertsRes = await req.db.query(
+      `SELECT ba.id, ba.batch_id, ba.student_id, ba.alert_type, ba.detail, ba.created_at,
+              s.full_name AS student_name,
+              COALESCE(leaves.leave_count, 0)::int AS leave_count
+       FROM batch_alerts ba
+       JOIN students s ON s.id = ba.student_id
+       LEFT JOIN attempts att ON att.exam_id = $2 AND att.student_id = ba.student_id
+       LEFT JOIN (
+         SELECT attempt_id, COUNT(*) AS leave_count
+         FROM attempt_events
+         WHERE event_type IN ('TAB_HIDDEN', 'FULLSCREEN_EXIT')
+         GROUP BY attempt_id
+       ) leaves ON leaves.attempt_id = att.id
+       WHERE ba.batch_id = $1 AND ba.id > $3
+       ORDER BY ba.id ASC
+       LIMIT 100`,
+      [batchId, batch.exam_id, since]
+    );
+
+    return res.json({
+      success: true,
+      batch_id: batchId,
+      exam_id: batch.exam_id,
+      data: alertsRes.rows
+    });
+  } catch (error) {
+    console.error('Get batch alerts error:', error);
+    return res.status(500).json({ success: false, message: 'Could not fetch batch alerts.' });
+  }
+};
+
+router.get('/batches/:batchId/alerts', getBatchAlertsHandler);
+
+// 7. POST send warning to an attempt (TEACHER, ADMIN, SUPERADMIN)
+const warnAttemptHandler = async (req, res) => {
+  try {
+    const attemptId = Number(req.params.attemptId);
+    if (!attemptId || !Number.isInteger(attemptId) || attemptId <= 0) {
+      return res.status(400).json({ success: false, message: 'Valid attemptId is required.' });
+    }
+
+    const { attempt, error } = await checkAttemptStaffAccess(req, attemptId);
+    if (error) return res.status(error.status).json({ success: false, message: error.message });
+
+    const message = req.body.message ? String(req.body.message).trim() : '';
+    if (!message || message.length < 1 || message.length > 200) {
+      return res.status(400).json({
+        success: false,
+        message: 'Warning message is required and must be between 1 and 200 characters.'
+      });
+    }
+
+    const warnRes = await req.db.query(
+      `INSERT INTO exam_warnings (attempt_id, message, sent_by, created_at)
+       VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
+       RETURNING id, attempt_id, message, sent_by, created_at, seen_at`,
+      [attempt.id, message, req.user.id]
+    );
+
+    return res.status(201).json({
+      success: true,
+      message: 'Warning sent successfully.',
+      data: warnRes.rows[0]
+    });
+  } catch (error) {
+    console.error('Warn attempt error:', error);
+    return res.status(500).json({ success: false, message: 'Could not send warning.' });
+  }
+};
+
+router.post('/attempts/:attemptId/warn', warnAttemptHandler);
 
 // =============================================================
 // STUDENT HELPER FUNCTIONS
@@ -2365,24 +2500,116 @@ const studentLeaveEventHandler = async (req, res) => {
     }
 
     const attemptRes = await req.db.query(
-      `SELECT id, submitted_at FROM attempts WHERE id = $1 AND student_id = $2`,
+      `SELECT a.id, a.exam_id, a.student_id, a.batch_student_id, a.submitted_at, 
+              COALESCE(e.max_leaves, 3)::int AS max_leaves,
+              COALESCE(bs.batch_id, (SELECT eb.id FROM exam_batches eb JOIN batch_students bs2 ON bs2.batch_id = eb.id WHERE bs2.student_id = a.student_id AND eb.exam_id = a.exam_id ORDER BY eb.id DESC LIMIT 1)) AS batch_id
+       FROM attempts a
+       JOIN exams e ON e.id = a.exam_id
+       LEFT JOIN batch_students bs ON bs.id = a.batch_student_id
+       WHERE a.id = $1 AND a.student_id = $2`,
       [attemptId, student.id]
     );
     if (attemptRes.rows.length === 0) {
       return res.status(404).json({ success: false, message: 'Attempt not found or access denied.' });
     }
 
-    if (!attemptRes.rows[0].submitted_at) {
+    const attempt = attemptRes.rows[0];
+    const maxLeaves = Number(attempt.max_leaves) || 3;
+
+    // Ignore events for attempts already submitted
+    if (attempt.submitted_at) {
+      const currentLeavesRes = await req.db.query(
+        `SELECT COUNT(*)::int AS count FROM attempt_events WHERE attempt_id = $1`,
+        [attemptId]
+      );
+      return res.json({
+        leaves: currentLeavesRes.rows[0].count,
+        maxLeaves,
+        autoSubmitted: true
+      });
+    }
+
+    // Ignore new event if the same attempt already has an event in the last 3 seconds.
+    // occurred_at is TIMESTAMPTZ so NOW() compares correctly across pool connections.
+    const recentEventRes = await req.db.query(
+      `SELECT id
+       FROM attempt_events
+       WHERE attempt_id = $1
+         AND occurred_at >= NOW() - INTERVAL '3 seconds'
+       LIMIT 1`,
+      [attemptId]
+    );
+
+    if (recentEventRes.rows.length > 0) {
+      const currentLeavesRes = await req.db.query(
+        `SELECT COUNT(*)::int AS count FROM attempt_events WHERE attempt_id = $1`,
+        [attemptId]
+      );
+      return res.json({
+        leaves: currentLeavesRes.rows[0].count,
+        maxLeaves,
+        autoSubmitted: false
+      });
+    }
+
+    // Save the event; occurred_at defaults to CURRENT_TIMESTAMP (TIMESTAMPTZ)
+    await req.db.query(
+      `INSERT INTO attempt_events (attempt_id, event_type) VALUES ($1, $2)`,
+      [attemptId, event_type]
+    );
+
+    // Get current leave count so far
+    const countRes = await req.db.query(
+      `SELECT COUNT(*)::int AS count FROM attempt_events WHERE attempt_id = $1`,
+      [attemptId]
+    );
+    const n = countRes.rows[0].count;
+
+    // Insert a batch_alerts row for that student's batch with detail 'Leave #n'
+    if (attempt.batch_id) {
       await req.db.query(
-        `INSERT INTO attempt_events (attempt_id, event_type, occurred_at)
-         VALUES ($1, $2, CURRENT_TIMESTAMP)`,
-        [attemptId, event_type]
+        `INSERT INTO batch_alerts (batch_id, student_id, alert_type, detail)
+         VALUES ($1, $2, $3, $4)`,
+        [attempt.batch_id, student.id, event_type, `Leave #${n}`]
       );
     }
 
+    // If the count is greater than or equal to the exam's max_leaves, auto-submit
+    if (n >= maxLeaves) {
+      await autoSubmitAttempt(req.db, attempt.id, 'AUTO_LEAVES');
+
+      if (attempt.batch_student_id) {
+        await req.db.query(
+          `UPDATE batch_students SET status = 'SUBMITTED' WHERE id = $1`,
+          [attempt.batch_student_id]
+        );
+      }
+
+      if (attempt.batch_id) {
+        await req.db.query(
+          `INSERT INTO batch_alerts (batch_id, student_id, alert_type, detail)
+           VALUES ($1, $2, 'AUTO_SUBMITTED', $3)`,
+          [attempt.batch_id, student.id, `Auto-submitted after leaving the exam page ${n} times`]
+        );
+      }
+
+      await req.db.query('COMMIT');
+      req.dbTransactionCommitted = true;
+
+      return res.json({
+        leaves: n,
+        maxLeaves,
+        autoSubmitted: true
+      });
+    }
+
+    await req.db.query('COMMIT');
+    req.dbTransactionCommitted = true;
+
     return res.json({
-      success: true,
-      message: 'Leave event recorded.'
+      leaves: n,
+      maxLeaves,
+      autoSubmitted: false
     });
   } catch (error) {
     console.error('Record leave event error:', error);
@@ -2392,6 +2619,73 @@ const studentLeaveEventHandler = async (req, res) => {
 
 router.post('/student/attempts/:attemptId/event', studentLeaveEventHandler);
 router.post('/student/exams/:id/event', studentLeaveEventHandler);
+
+// 6. GET warnings for an attempt (STUDENT only, only their own attempt)
+const getMyAttemptWarningsHandler = async (req, res) => {
+  try {
+    const { student, error } = await getStudentFromUser(req);
+    if (error) return res.status(error.status).json({ success: false, message: error.message });
+
+    let attemptId = Number(req.params.attemptId);
+    if (!attemptId && req.params.id) {
+      const examId = Number(req.params.id);
+      const attLookup = await req.db.query(
+        `SELECT id FROM attempts WHERE exam_id = $1 AND student_id = $2`,
+        [examId, student.id]
+      );
+      if (attLookup.rows.length === 0) {
+        return res.status(404).json({ success: false, message: 'Active attempt not found.' });
+      }
+      attemptId = attLookup.rows[0].id;
+    }
+
+    if (!attemptId || !Number.isInteger(attemptId) || attemptId <= 0) {
+      return res.status(400).json({ success: false, message: 'Valid attemptId is required.' });
+    }
+
+    // Verify attempt belongs to this student
+    const attCheck = await req.db.query(
+      `SELECT id FROM attempts WHERE id = $1 AND student_id = $2`,
+      [attemptId, student.id]
+    );
+    if (attCheck.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Attempt not found or access denied.' });
+    }
+
+    // Fetch unseen warnings
+    const warningsRes = await req.db.query(
+      `SELECT id, attempt_id, message, sent_by, created_at, seen_at
+       FROM exam_warnings
+       WHERE attempt_id = $1 AND seen_at IS NULL
+       ORDER BY id ASC`,
+      [attemptId]
+    );
+
+    // Mark warnings as seen
+    if (warningsRes.rows.length > 0) {
+      await req.db.query(
+        `UPDATE exam_warnings
+         SET seen_at = CURRENT_TIMESTAMP
+         WHERE attempt_id = $1 AND seen_at IS NULL`,
+        [attemptId]
+      );
+      await req.db.query('COMMIT');
+      req.dbTransactionCommitted = true;
+    }
+
+    return res.json({
+      success: true,
+      data: warningsRes.rows
+    });
+  } catch (error) {
+    console.error('Get attempt warnings error:', error);
+    return res.status(500).json({ success: false, message: 'Could not fetch exam warnings.' });
+  }
+};
+
+router.get('/my-attempts/:attemptId/warnings', getMyAttemptWarningsHandler);
+router.get('/student/attempts/:attemptId/warnings', getMyAttemptWarningsHandler);
+router.get('/student/exams/:id/warnings', getMyAttemptWarningsHandler);
 
 // 6. POST submit: mark on the server, store correct_count and score (scaled to total_marks), set status SUBMITTED. Return only { success: true, message: 'Exam submitted successfully' }. The student must never receive a score.
 const studentSubmitExamHandler = async (req, res) => {
