@@ -7,7 +7,15 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: {
     rejectUnauthorized: false
-  }
+  },
+  // Neon Cloud terminates idle connections after ~5 minutes.
+  // Setting idleTimeoutMillis below that threshold ensures the pool
+  // proactively closes stale clients before Neon kills them,
+  // preventing "Authentication timed out" (08P01) errors.
+  idleTimeoutMillis: 10000,
+  connectionTimeoutMillis: 30000,
+  max: 10,
+  keepAlive: true
 });
 
 const initializeDb = async () => {
@@ -63,6 +71,19 @@ const initializeDb = async () => {
 };
 
 initializeDb();
+
+// Neon Cloud may terminate idle pool clients unexpectedly.
+// This handler prevents unhandled 'error' events from crashing the process.
+pool.on('error', (err) => {
+  console.error('Unexpected error on idle DB client (pool):', err.message);
+});
+
+pool.on('connect', (client) => {
+  client.on('error', (err) => {
+    console.error('Unexpected error on connected DB client:', err.message);
+  });
+});
+
 
 // Export pool directly as default so 'const pool = require("./db")' works everywhere
 module.exports = pool;

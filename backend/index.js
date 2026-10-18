@@ -25,6 +25,7 @@ if (!process.env.DATABASE_URL) {
 }
 
 const app = express();
+app.set('trust proxy', 1);
 
 const materialUploadMiddleware = multer({
   storage: multer.memoryStorage(),
@@ -69,6 +70,17 @@ const passwordResetLimiter = rateLimit({
   }),
   standardHeaders: true,
   legacyHeaders: false
+});
+
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10, // 10 attempts
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: 'Too many login attempts. Try again in 15 minutes.'
+  }
 });
 
 // Security and Middleware Configuration
@@ -1034,7 +1046,7 @@ app.post('/api/auth/register/teacher', registrationLimiter, validate(schemas.tea
   }
 });
 
-app.post('/api/auth/login', validate(schemas.login), async (req, res) => {
+app.post('/api/auth/login', loginLimiter, validate(schemas.login), async (req, res) => {
   const { email, password, portal, admissionNumber } = req.body;
 
   if (!email || !password || !portal) {
@@ -1618,6 +1630,8 @@ app.delete('/api/materials/:id', verifyToken, async (req, res) => {
     res.status(500).json({ success: false, message: 'Could not delete learning material.' });
   }
 });
+
+app.use('/api/cbt', require('./cbt'));
 
 app.get('/api/admin/users', verifyToken, requireRole('ADMIN', 'SUPERADMIN'), async (req, res) => {
   try {
