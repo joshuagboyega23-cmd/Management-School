@@ -92,8 +92,23 @@ const requireRole = (...roles) => {
   };
 };
 
-// All CBT routes require staff access
-router.use(verifyToken, requireRole('TEACHER', 'ADMIN', 'SUPERADMIN'));
+// Authentication middleware for all CBT routes
+router.use(verifyToken);
+
+// Role gate: /student/* routes require STUDENT role; other CBT routes require TEACHER, ADMIN, or SUPERADMIN
+router.use((req, res, next) => {
+  if (req.path.startsWith('/student')) {
+    if (!req.user || req.user.role !== 'STUDENT') {
+      return res.status(403).json({ success: false, message: 'Access denied. Student portal only.' });
+    }
+    return next();
+  }
+  // Staff CBT routes
+  if (!req.user || !['TEACHER', 'ADMIN', 'SUPERADMIN'].includes(req.user.role)) {
+    return res.status(403).json({ success: false, message: 'Unauthorized action for your role.' });
+  }
+  next();
+});
 
 // Helper: Check teacher/admin permissions on an exam
 async function checkExamAccess(req, examId) {
@@ -1196,4 +1211,1247 @@ router.post('/questions/:questionId/correct-key', async (req, res) => {
   }
 });
 
+// =============================================================
+// HELPER: CHECK BATCH ACCESS
+// =============================================================
+
+async function checkBatchAccess(req, batchId) {
+  const result = await req.db.query(
+    `SELECT b.*, e.id AS exam_id, e.title AS exam_title, e.class_id, e.created_by, e.status AS exam_status,
+            c.name AS class_name, c.homeroom_teacher_id
+     FROM exam_batches b
+     JOIN exams e ON e.id = b.exam_id
+     JOIN classes c ON c.id = e.class_id
+     WHERE b.id = $1`,
+    [Number(batchId)]
+  );
+
+  if (result.rows.length === 0) {
+    return { error: { status: 404, message: 'Exam batch not found.' } };
+  }
+
+  const batch = result.rows[0];
+  const isAdmin = ['ADMIN', 'SUPERADMIN'].includes(req.user.role);
+
+  if (!isAdmin) {
+    if (Number(batch.created_by) !== Number(req.user.id)) {
+      return { error: { status: 403, message: 'Access denied: You can only manage batches for your own exams.' } };
+    }
+    if (batch.homeroom_teacher_id && Number(batch.homeroom_teacher_id) !== Number(req.user.id)) {
+      return { error: { status: 403, message: 'Access denied: You can only manage batches for classes you teach.' } };
+    }
+  }
+
+  return { batch };
+}
+
+// =============================================================
+// BATCH ROUTES
+// =============================================================
+
+// 1. GET students of the exam's class with live status for the current batch + tab-leave counts
+const getExamStudentsHandler = async (req, res) => {
+  try {
+    const examId = Number(req.params.id);
+    const { exam, error } = await checkExamAccess(req, examId);
+    if (error) return res.status(error.status).json({ success: false, message: error.message });
+
+    // Look for the current batch (prefer LIVE, otherwise most recent)
+    const batchResult = await req.db.query(
+      `SELECT * FROM exam_batches
+       WHERE exam_id = $1
+       ORDER BY (CASE WHEN status = 'LIVE' THEN 0 ELSE 1 END), id DESC
+       LIMIT 1`,
+      [examId]
+    );
+
+    const currentBatch = batchResult.rows.length > 0 ? batchResult.rows[0] : null;
+    const currentBatchId = currentBatch ? currentBatch.id : 0;
+
+    // Fetch all students in the exam's class with live batch status & tab leaves
+    const studentsResult = await req.db.query(
+      `SELECT
+         s.id AS student_id,
+         s.full_name,
+         s.admission_number,
+         s.class_id,
+         bs.id AS batch_student_id,
+         bs.batch_id,
+         COALESCE(bs.status, 'WAITING') AS status,
+         bs.status AS batch_status,
+         COALESCE(bs.code_attempts, 0)::int AS code_attempts,
+         COALESCE(bs.added_late, false) AS added_late,
+         att.id AS attempt_id,
+         att.started_at AS attempt_started_at,
+         att.submitted_at AS attempt_submitted_at,
+         att.score,
+         COALESCE(ev.tab_leave_count, 0)::int AS tab_leave_count
+       FROM students s
+       LEFT JOIN batch_students bs ON bs.student_id = s.id AND bs.batch_id = $2
+       LEFT JOIN attempts att ON att.exam_id = $1 AND att.student_id = s.id
+       LEFT JOIN (
+         SELECT attempt_id, COUNT(*) AS tab_leave_count
+         FROM attempt_events
+         WHERE event_type = 'TAB_HIDDEN'
+         GROUP BY attempt_id
+       ) ev ON ev.attempt_id = att.id
+       WHERE s.class_id = $3
+       ORDER BY s.full_name ASC`,
+      [examId, currentBatchId, exam.class_id]
+    );
+
+    return res.json({
+      success: true,
+      exam_id: examId,
+      class_id: exam.class_id,
+      current_batch: currentBatch ? {
+        id: currentBatch.id,
+        access_code: currentBatch.access_code,
+        status: currentBatch.status,
+        started_at: currentBatch.started_at,
+        ended_at: currentBatch.ended_at
+      } : null,
+      data: studentsResult.rows
+    });
+  } catch (error) {
+    console.error('Get exam batch students error:', error);
+    return res.status(500).json({ success: false, message: 'Could not fetch students for this exam batch.' });
+  }
+};
+
+router.get('/exams/:id/students', getExamStudentsHandler);
+router.get('/exams/:id/batch-students', getExamStudentsHandler);
+
+// 2. POST start batch
+const startBatchHandler = async (req, res) => {
+  try {
+    const examId = Number(req.params.id);
+    const { exam, error } = await checkExamAccess(req, examId);
+    if (error) return res.status(error.status).json({ success: false, message: error.message });
+
+    if (exam.status !== 'PUBLISHED') {
+      return res.status(400).json({ success: false, message: 'Exam must be PUBLISHED before starting a batch.' });
+    }
+
+    const { student_ids } = req.body;
+    if (!Array.isArray(student_ids) || student_ids.length === 0) {
+      return res.status(400).json({ success: false, message: 'At least one student must be selected to start a batch.' });
+    }
+
+    // Convert and deduplicate student IDs
+    const cleanStudentIds = [...new Set(student_ids.map(Number).filter((id) => !isNaN(id) && id > 0))];
+    if (cleanStudentIds.length === 0) {
+      return res.status(400).json({ success: false, message: 'Valid student IDs are required.' });
+    }
+
+    // Verify all students belong to the exam's class
+    const validStudents = await req.db.query(
+      `SELECT id FROM students WHERE id = ANY($1::int[]) AND class_id = $2`,
+      [cleanStudentIds, exam.class_id]
+    );
+
+    if (validStudents.rows.length !== cleanStudentIds.length) {
+      return res.status(400).json({
+        success: false,
+        message: "One or more selected students do not belong to this exam's class."
+      });
+    }
+
+    // Check if there is already an active LIVE batch for this exam
+    const activeBatchCheck = await req.db.query(
+      `SELECT id FROM exam_batches WHERE exam_id = $1 AND status = 'LIVE'`,
+      [examId]
+    );
+    if (activeBatchCheck.rows.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: `An active batch (#${activeBatchCheck.rows[0].id}) is currently LIVE for this exam. Please end it before starting a new batch.`
+      });
+    }
+
+    // Generate random 6-digit code using crypto.randomInt(0, 1000000) padded with leading zeros
+    const accessCode = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+
+    // Create batch
+    const batchResult = await req.db.query(
+      `INSERT INTO exam_batches (exam_id, access_code, status, started_by, started_at)
+       VALUES ($1, $2, 'LIVE', $3, CURRENT_TIMESTAMP)
+       RETURNING *`,
+      [examId, accessCode, req.user.id]
+    );
+    const newBatch = batchResult.rows[0];
+
+    // Create batch_students rows
+    for (const sId of cleanStudentIds) {
+      await req.db.query(
+        `INSERT INTO batch_students (batch_id, student_id, status, added_late)
+         VALUES ($1, $2, 'WAITING', false)`,
+        [newBatch.id, sId]
+      );
+    }
+
+    // Ensure questions are locked
+    await req.db.query(
+      `UPDATE exams SET questions_locked = true WHERE id = $1`,
+      [examId]
+    );
+
+    return res.status(201).json({
+      success: true,
+      message: 'Batch started successfully.',
+      data: {
+        batch_id: newBatch.id,
+        exam_id: examId,
+        access_code: accessCode,
+        status: 'LIVE',
+        student_count: cleanStudentIds.length,
+        started_at: newBatch.started_at
+      }
+    });
+  } catch (error) {
+    console.error('Start batch error:', error);
+    return res.status(500).json({ success: false, message: 'Could not start exam batch.' });
+  }
+};
+
+router.post('/exams/:id/batches', startBatchHandler);
+router.post('/exams/:id/start-batch', startBatchHandler);
+
+// 3. POST add a late student to a running batch
+const addLateStudentHandler = async (req, res) => {
+  try {
+    let batchId = Number(req.params.batchId);
+
+    // If route called via /exams/:id/add-student without batchId param
+    if (!batchId && req.params.id) {
+      const examId = Number(req.params.id);
+      const { exam, error } = await checkExamAccess(req, examId);
+      if (error) return res.status(error.status).json({ success: false, message: error.message });
+
+      const liveBatchRes = await req.db.query(
+        `SELECT id FROM exam_batches WHERE exam_id = $1 AND status = 'LIVE' ORDER BY id DESC LIMIT 1`,
+        [examId]
+      );
+      if (liveBatchRes.rows.length === 0) {
+        return res.status(400).json({ success: false, message: 'No active LIVE batch found for this exam.' });
+      }
+      batchId = liveBatchRes.rows[0].id;
+    }
+
+    const { batch, error } = await checkBatchAccess(req, batchId);
+    if (error) return res.status(error.status).json({ success: false, message: error.message });
+
+    if (batch.status !== 'LIVE') {
+      return res.status(400).json({ success: false, message: 'Cannot add student: This batch is not currently LIVE.' });
+    }
+
+    const inputStudents = Array.isArray(req.body.student_ids)
+      ? req.body.student_ids
+      : (req.body.student_id ? [req.body.student_id] : []);
+
+    const cleanStudentIds = [...new Set(inputStudents.map(Number).filter((id) => !isNaN(id) && id > 0))];
+    if (cleanStudentIds.length === 0) {
+      return res.status(400).json({ success: false, message: 'At least one valid student ID is required.' });
+    }
+
+    // Verify all students belong to the batch's class
+    const validStudents = await req.db.query(
+      `SELECT id FROM students WHERE id = ANY($1::int[]) AND class_id = $2`,
+      [cleanStudentIds, batch.class_id]
+    );
+
+    if (validStudents.rows.length !== cleanStudentIds.length) {
+      return res.status(400).json({
+        success: false,
+        message: "One or more selected students do not belong to this exam's class."
+      });
+    }
+
+    // Check if any student is already enrolled in this batch
+    const existingCheck = await req.db.query(
+      `SELECT student_id FROM batch_students WHERE batch_id = $1 AND student_id = ANY($2::int[])`,
+      [batchId, cleanStudentIds]
+    );
+    if (existingCheck.rows.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: `Student (ID ${existingCheck.rows[0].student_id}) is already enrolled in this batch.`
+      });
+    }
+
+    // Insert late students
+    const insertedStudents = [];
+    for (const sId of cleanStudentIds) {
+      const insRes = await req.db.query(
+        `INSERT INTO batch_students (batch_id, student_id, status, added_late)
+         VALUES ($1, $2, 'WAITING', true)
+         RETURNING *`,
+        [batchId, sId]
+      );
+      insertedStudents.push(insRes.rows[0]);
+    }
+
+    return res.status(201).json({
+      success: true,
+      message: 'Late student(s) added to batch successfully.',
+      data: {
+        batch_id: batchId,
+        access_code: batch.access_code,
+        added_students: insertedStudents
+      }
+    });
+  } catch (error) {
+    console.error('Add late student error:', error);
+    return res.status(500).json({ success: false, message: 'Could not add student to batch.' });
+  }
+};
+
+router.post('/batches/:batchId/add-student', addLateStudentHandler);
+router.post('/exams/:id/batches/:batchId/add-student', addLateStudentHandler);
+router.post('/exams/:id/add-student', addLateStudentHandler);
+
+// 4. POST end batch
+const endBatchHandler = async (req, res) => {
+  try {
+    let batchId = Number(req.params.batchId);
+
+    // If called via /exams/:id/end-batch without batchId in params
+    if (!batchId && req.params.id) {
+      const examId = Number(req.params.id);
+      const { exam, error } = await checkExamAccess(req, examId);
+      if (error) return res.status(error.status).json({ success: false, message: error.message });
+
+      const liveBatchRes = await req.db.query(
+        `SELECT id FROM exam_batches WHERE exam_id = $1 AND status = 'LIVE' ORDER BY id DESC LIMIT 1`,
+        [examId]
+      );
+      if (liveBatchRes.rows.length === 0) {
+        return res.status(400).json({ success: false, message: 'No active LIVE batch found for this exam.' });
+      }
+      batchId = liveBatchRes.rows[0].id;
+    }
+
+    const { batch, error } = await checkBatchAccess(req, batchId);
+    if (error) return res.status(error.status).json({ success: false, message: error.message });
+
+    if (batch.status === 'ENDED') {
+      return res.status(400).json({ success: false, message: 'Batch has already been ended.' });
+    }
+
+    const updated = await req.db.query(
+      `UPDATE exam_batches
+       SET status = 'ENDED', ended_at = CURRENT_TIMESTAMP
+       WHERE id = $1
+       RETURNING *`,
+      [batchId]
+    );
+
+    return res.json({
+      success: true,
+      message: 'Batch ended successfully.',
+      data: {
+        batch_id: batchId,
+        exam_id: batch.exam_id,
+        status: 'ENDED',
+        ended_at: updated.rows[0].ended_at
+      }
+    });
+  } catch (error) {
+    console.error('End batch error:', error);
+    return res.status(500).json({ success: false, message: 'Could not end exam batch.' });
+  }
+};
+
+router.post('/batches/:batchId/end', endBatchHandler);
+router.post('/exams/:id/batches/:batchId/end', endBatchHandler);
+router.post('/exams/:id/end-batch', endBatchHandler);
+
+// 5. POST unlock a LOCKED_OUT student by adding them to a new batch
+const unlockStudentHandler = async (req, res) => {
+  try {
+    let examId = Number(req.params.id);
+
+    // If called via /batches/:batchId/unlock-student
+    if (!examId && req.params.batchId) {
+      const { batch, error } = await checkBatchAccess(req, req.params.batchId);
+      if (error) return res.status(error.status).json({ success: false, message: error.message });
+      examId = batch.exam_id;
+    }
+
+    const { exam, error } = await checkExamAccess(req, examId);
+    if (error) return res.status(error.status).json({ success: false, message: error.message });
+
+    const studentId = Number(req.body.student_id);
+    if (!studentId || isNaN(studentId)) {
+      return res.status(400).json({ success: false, message: 'A valid student_id is required.' });
+    }
+
+    // Verify student belongs to this exam's class
+    const studentCheck = await req.db.query(
+      `SELECT id, full_name, admission_number FROM students WHERE id = $1 AND class_id = $2`,
+      [studentId, exam.class_id]
+    );
+    if (studentCheck.rows.length === 0) {
+      return res.status(400).json({ success: false, message: "Student does not belong to this exam's class." });
+    }
+
+    let targetBatch;
+
+    // If teacher provided a specific batch_id to add into
+    if (req.body.batch_id) {
+      const bRes = await req.db.query(
+        `SELECT * FROM exam_batches WHERE id = $1 AND exam_id = $2`,
+        [Number(req.body.batch_id), examId]
+      );
+      if (bRes.rows.length === 0) {
+        return res.status(404).json({ success: false, message: 'Specified batch was not found for this exam.' });
+      }
+      targetBatch = bRes.rows[0];
+      if (targetBatch.status !== 'LIVE') {
+        return res.status(400).json({ success: false, message: 'Specified batch is not LIVE.' });
+      }
+    } else {
+      // Create a new batch for this unlocked student
+      const newCode = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+      const newBatchRes = await req.db.query(
+        `INSERT INTO exam_batches (exam_id, access_code, status, started_by, started_at)
+         VALUES ($1, $2, 'LIVE', $3, CURRENT_TIMESTAMP)
+         RETURNING *`,
+        [examId, newCode, req.user.id]
+      );
+      targetBatch = newBatchRes.rows[0];
+    }
+
+    // Check if student is already enrolled in targetBatch
+    const existingEnrollment = await req.db.query(
+      `SELECT id, status FROM batch_students WHERE batch_id = $1 AND student_id = $2`,
+      [targetBatch.id, studentId]
+    );
+
+    let batchStudent;
+    if (existingEnrollment.rows.length > 0) {
+      // Reset status to WAITING and clear code_attempts
+      const resetRes = await req.db.query(
+        `UPDATE batch_students
+         SET status = 'WAITING', code_attempts = 0
+         WHERE id = $1
+         RETURNING *`,
+        [existingEnrollment.rows[0].id]
+      );
+      batchStudent = resetRes.rows[0];
+    } else {
+      const insRes = await req.db.query(
+        `INSERT INTO batch_students (batch_id, student_id, status, added_late, code_attempts)
+         VALUES ($1, $2, 'WAITING', false, 0)
+         RETURNING *`,
+        [targetBatch.id, studentId]
+      );
+      batchStudent = insRes.rows[0];
+    }
+
+    // If student already has an attempt record, link it to the new batch_student
+    await req.db.query(
+      `UPDATE attempts
+       SET batch_student_id = $1
+       WHERE exam_id = $2 AND student_id = $3`,
+      [batchStudent.id, examId, studentId]
+    );
+
+    return res.json({
+      success: true,
+      message: 'Student unlocked successfully and enrolled in batch.',
+      data: {
+        student_id: studentId,
+        student_name: studentCheck.rows[0].full_name,
+        batch_id: targetBatch.id,
+        access_code: targetBatch.access_code,
+        status: 'WAITING'
+      }
+    });
+  } catch (error) {
+    console.error('Unlock student error:', error);
+    return res.status(500).json({ success: false, message: 'Could not unlock student.' });
+  }
+};
+
+router.post('/exams/:id/unlock-student', unlockStudentHandler);
+router.post('/batches/:batchId/unlock-student', unlockStudentHandler);
+
+// =============================================================
+// STUDENT HELPER FUNCTIONS
+// =============================================================
+
+function timingSafeCompare(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  const bufA = Buffer.from(a.trim());
+  const bufB = Buffer.from(b.trim());
+  if (bufA.length !== bufB.length) {
+    crypto.timingSafeEqual(bufA, bufA);
+    return false;
+  }
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
+function shuffleArray(array) {
+  const arr = [...array];
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = crypto.randomInt(0, i + 1);
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+async function getStudentFromUser(req) {
+  const result = await req.db.query(
+    'SELECT * FROM students WHERE user_id = $1',
+    [Number(req.user.id)]
+  );
+  if (result.rows.length === 0) {
+    return { error: { status: 404, message: 'Student profile not found for this account.' } };
+  }
+  return { student: result.rows[0] };
+}
+
+// Auto-submit helper: marks score on server and sets status to SUBMITTED
+async function autoSubmitAttempt(dbOrPool, attemptId, submitType = 'AUTO_TIME') {
+  const isPool = typeof dbOrPool.release !== 'function' && typeof dbOrPool.connect === 'function';
+  const client = isPool ? await dbOrPool.connect() : dbOrPool;
+
+  try {
+    if (isPool) await client.query('BEGIN');
+
+    const attRes = await client.query(
+      `SELECT a.id, a.exam_id, a.student_id, a.batch_student_id, a.submitted_at, a.deadline_at, e.total_marks
+       FROM attempts a
+       JOIN exams e ON e.id = a.exam_id
+       WHERE a.id = $1`,
+      [attemptId]
+    );
+    if (attRes.rows.length === 0) {
+      if (isPool) await client.query('COMMIT');
+      return null;
+    }
+
+    const att = attRes.rows[0];
+    if (att.submitted_at) {
+      if (isPool) await client.query('COMMIT');
+      return att;
+    }
+
+    const totalQRes = await client.query(
+      'SELECT COUNT(*)::int AS total FROM questions WHERE exam_id = $1',
+      [att.exam_id]
+    );
+    const totalQuestions = totalQRes.rows[0].total;
+
+    // Temporarily elevate role setting to SUPERADMIN to allow reading question_keys under RLS
+    const prevRoleRes = await client.query("SELECT current_setting('app.current_role', true) AS role");
+    const prevRole = prevRoleRes.rows[0]?.role || 'STUDENT';
+    await client.query("SELECT set_config('app.current_role', 'SUPERADMIN', true)");
+
+    const correctRes = await client.query(
+      `SELECT COUNT(*)::int AS correct
+       FROM attempt_answers aa
+       JOIN question_keys qk ON qk.question_id = aa.question_id
+       WHERE aa.attempt_id = $1 AND aa.selected_label = qk.correct_label`,
+      [attemptId]
+    );
+    const correctCount = correctRes.rows[0].correct;
+
+    if (!isPool) {
+      await client.query("SELECT set_config('app.current_role', $1, true)", [prevRole]);
+    }
+
+    const totalMarks = Number(att.total_marks) || 60;
+    const score = totalQuestions > 0 ? Number(((correctCount / totalQuestions) * totalMarks).toFixed(2)) : 0;
+
+    await client.query(
+      `UPDATE attempts
+       SET submitted_at = COALESCE(submitted_at, CURRENT_TIMESTAMP),
+           submit_type = $1,
+           correct_count = $2,
+           score = $3
+       WHERE id = $4 AND submitted_at IS NULL`,
+      [submitType, correctCount, score, attemptId]
+    );
+
+    if (att.batch_student_id) {
+      await client.query(
+        `UPDATE batch_students
+         SET status = 'SUBMITTED'
+         WHERE id = $1`,
+        [att.batch_student_id]
+      );
+    }
+
+    if (isPool) await client.query('COMMIT');
+    return { id: attemptId, score, correctCount, finalized: true };
+  } catch (err) {
+    if (isPool) {
+      try { await client.query('ROLLBACK'); } catch (_) {}
+    }
+    throw err;
+  } finally {
+    if (isPool) client.release();
+  }
+}
+
+// Background auto-submit sweep every 30 seconds
+const autoSubmitSweep = async () => {
+  try {
+    const expiredRes = await pool.query(
+      `SELECT id FROM attempts
+       WHERE submitted_at IS NULL
+         AND deadline_at <= CURRENT_TIMESTAMP`
+    );
+    for (const row of expiredRes.rows) {
+      await autoSubmitAttempt(pool, row.id, 'AUTO_TIME');
+    }
+  } catch (err) {
+    console.error('CBT Auto-submit sweep error:', err.message);
+  }
+};
+
+const sweepInterval = setInterval(autoSubmitSweep, 30000);
+if (sweepInterval.unref) {
+  sweepInterval.unref();
+}
+
+// =============================================================
+// STUDENT CBT ROUTES (STUDENT role only)
+// =============================================================
+
+// 1. GET my available exams: only exams where I am in a LIVE batch. Return no questions.
+const getStudentAvailableExamsHandler = async (req, res) => {
+  try {
+    const { student, error } = await getStudentFromUser(req);
+    if (error) return res.status(error.status).json({ success: false, message: error.message });
+
+    // Auto-submit any expired attempt for this student before returning
+    const studentExpiredAttempts = await req.db.query(
+      `SELECT id FROM attempts
+       WHERE student_id = $1
+         AND submitted_at IS NULL
+         AND deadline_at <= CURRENT_TIMESTAMP`,
+      [student.id]
+    );
+    for (const exp of studentExpiredAttempts.rows) {
+      await autoSubmitAttempt(req.db, exp.id, 'AUTO_TIME');
+    }
+
+    // Query exams where student has an active batch_students entry in a LIVE batch
+    const examsResult = await req.db.query(
+      `SELECT
+         e.id AS exam_id,
+         e.title,
+         e.subject,
+         e.term,
+         e.duration_minutes,
+         e.total_marks,
+         eb.id AS batch_id,
+         eb.status AS batch_status,
+         bs.id AS batch_student_id,
+         bs.status AS student_status,
+         bs.code_attempts,
+         att.id AS attempt_id,
+         att.started_at AS attempt_started_at,
+         att.deadline_at AS attempt_deadline_at,
+         att.submitted_at AS attempt_submitted_at
+       FROM batch_students bs
+       JOIN exam_batches eb ON eb.id = bs.batch_id
+       JOIN exams e ON e.id = eb.exam_id
+       LEFT JOIN attempts att ON att.exam_id = e.id AND att.student_id = bs.student_id
+       WHERE bs.student_id = $1
+         AND eb.status = 'LIVE'
+         AND e.status = 'PUBLISHED'
+       ORDER BY eb.started_at DESC`,
+      [student.id]
+    );
+
+    return res.json({
+      success: true,
+      data: examsResult.rows
+    });
+  } catch (error) {
+    console.error('Get student available exams error:', error);
+    return res.status(500).json({ success: false, message: 'Could not fetch available exams.' });
+  }
+};
+
+router.get('/student/exams', getStudentAvailableExamsHandler);
+router.get('/student/available-exams', getStudentAvailableExamsHandler);
+
+// 2. POST enter code: compare with batch code (timing-safe).
+// 5 wrong attempts sets code_locked_until = now + 30s and inserts a batch_alerts row.
+// Correct code sets CODE_ENTERED and resets code_attempts to 0.
+const studentEnterCodeHandler = async (req, res) => {
+  try {
+    const { student, error } = await getStudentFromUser(req);
+    if (error) return res.status(error.status).json({ success: false, message: error.message });
+
+    const code = req.body.code ? String(req.body.code).trim() : '';
+    if (!code) {
+      return res.status(400).json({ success: false, message: 'Batch access code is required.' });
+    }
+
+    const examId = req.params.id ? Number(req.params.id) : (req.body.exam_id ? Number(req.body.exam_id) : null);
+    const batchId = req.body.batch_id ? Number(req.body.batch_id) : null;
+
+    // Find the live batch_students record for this student
+    const bsResult = await req.db.query(
+      `SELECT bs.*, 
+              EXTRACT(EPOCH FROM (bs.code_locked_until - CURRENT_TIMESTAMP))::int AS lock_remaining_seconds,
+              eb.access_code, eb.status AS batch_status, e.id AS exam_id, e.title AS exam_title
+       FROM batch_students bs
+       JOIN exam_batches eb ON eb.id = bs.batch_id
+       JOIN exams e ON e.id = eb.exam_id
+       WHERE bs.student_id = $1
+         AND ($2::int IS NULL OR e.id = $2)
+         AND ($3::int IS NULL OR eb.id = $3)
+         AND eb.status = 'LIVE'
+       ORDER BY eb.id DESC
+       LIMIT 1`,
+      [student.id, examId, batchId]
+    );
+
+    if (bsResult.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'No live exam batch found for your account.' });
+    }
+
+    const batchStudent = bsResult.rows[0];
+
+    // While code_locked_until is in the future, refuse ALL code attempts, even a correct one
+    const lockRemaining = Number(batchStudent.lock_remaining_seconds || 0);
+    if (lockRemaining > 0) {
+      return res.status(429).json({
+        success: false,
+        message: 'Please wait before trying again.',
+        retryAfterSeconds: lockRemaining
+      });
+    }
+
+    if (batchStudent.status === 'LOCKED_OUT') {
+      return res.status(403).json({
+        success: false,
+        message: 'You have been locked out. Please contact your invigilator.',
+        status: 'LOCKED_OUT'
+      });
+    }
+
+    if (batchStudent.status === 'SUBMITTED') {
+      return res.status(400).json({ success: false, message: 'You have already submitted this exam.' });
+    }
+
+    // Compare entered code with batch access code using timing-safe comparison
+    const isMatch = timingSafeCompare(code, batchStudent.access_code);
+
+    if (!isMatch) {
+      const newAttempts = Number(batchStudent.code_attempts || 0) + 1;
+      if (newAttempts >= 5) {
+        await req.db.query(
+          `UPDATE batch_students
+           SET code_attempts = 0,
+               code_locked_until = CURRENT_TIMESTAMP + INTERVAL '30 seconds'
+           WHERE id = $1`,
+          [batchStudent.id]
+        );
+
+        await req.db.query(
+          `INSERT INTO batch_alerts (batch_id, student_id, alert_type, detail)
+           VALUES ($1, $2, 'WRONG_CODES', 'Several wrong codes in a row')`,
+          [batchStudent.batch_id, student.id]
+        );
+
+        await req.db.query('COMMIT');
+        req.dbTransactionCommitted = true;
+
+        return res.status(429).json({
+          success: false,
+          message: 'Please wait before trying again.',
+          retryAfterSeconds: 30
+        });
+      } else {
+        await req.db.query(
+          `UPDATE batch_students
+           SET code_attempts = $1
+           WHERE id = $2`,
+          [newAttempts, batchStudent.id]
+        );
+        await req.db.query('COMMIT');
+        req.dbTransactionCommitted = true;
+
+        return res.status(400).json({
+          success: false,
+          message: 'Incorrect access code.'
+        });
+      }
+    }
+
+    // Code is correct: update status to CODE_ENTERED and reset code_attempts
+    await req.db.query(
+      `UPDATE batch_students
+       SET status = 'CODE_ENTERED', code_attempts = 0, code_locked_until = NULL
+       WHERE id = $1`,
+      [batchStudent.id]
+    );
+    await req.db.query('COMMIT');
+    req.dbTransactionCommitted = true;
+
+    // Questions are intentionally NOT returned here
+    return res.json({
+      success: true,
+      message: 'Code accepted. You may now start your exam.',
+      status: 'CODE_ENTERED',
+      exam_id: batchStudent.exam_id,
+      batch_id: batchStudent.batch_id
+    });
+  } catch (error) {
+    console.error('Student enter code error:', error);
+    return res.status(500).json({ success: false, message: 'Could not process batch code.' });
+  }
+};
+
+router.post('/student/enter-code', studentEnterCodeHandler);
+router.post('/student/exams/:id/enter-code', studentEnterCodeHandler);
+
+// 3. POST start: only if CODE_ENTERED. Create attempt with deadline_at = now() + duration, random device_token, and shuffle_map. Return questions and options with images, NEVER correct answers. Calling start again after a refresh returns the same order and same deadline.
+const studentStartExamHandler = async (req, res) => {
+  try {
+    const { student, error } = await getStudentFromUser(req);
+    if (error) return res.status(error.status).json({ success: false, message: error.message });
+
+    const examId = Number(req.params.id || req.body.exam_id);
+    if (!examId || isNaN(examId)) {
+      return res.status(400).json({ success: false, message: 'A valid exam_id is required.' });
+    }
+
+    // Look up student's batch entry for this exam
+    const bsResult = await req.db.query(
+      `SELECT bs.*, eb.status AS batch_status, e.title, e.subject, e.duration_minutes, e.total_marks, e.shuffle
+       FROM batch_students bs
+       JOIN exam_batches eb ON eb.id = bs.batch_id
+       JOIN exams e ON e.id = eb.exam_id
+       WHERE bs.student_id = $1 AND e.id = $2
+       ORDER BY bs.id DESC
+       LIMIT 1`,
+      [student.id, examId]
+    );
+
+    if (bsResult.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'You are not enrolled in a batch for this exam.' });
+    }
+
+    const batchStudent = bsResult.rows[0];
+
+    if (batchStudent.status === 'LOCKED_OUT') {
+      return res.status(403).json({ success: false, message: 'You are locked out of this exam. Please contact your invigilator.' });
+    }
+
+    if (batchStudent.status === 'SUBMITTED') {
+      return res.status(400).json({ success: false, message: 'You have already submitted this exam.' });
+    }
+
+    // Check if an attempt already exists (One attempt per student per exam)
+    const existingAttemptRes = await req.db.query(
+      `SELECT * FROM attempts WHERE exam_id = $1 AND student_id = $2`,
+      [examId, student.id]
+    );
+
+    let attempt;
+
+    if (existingAttemptRes.rows.length > 0) {
+      // Refresh / resume existing attempt
+      attempt = existingAttemptRes.rows[0];
+
+      if (attempt.submitted_at) {
+        return res.status(400).json({ success: false, message: 'You have already submitted this exam.' });
+      }
+
+      // Check if deadline has expired
+      if (new Date() >= new Date(attempt.deadline_at)) {
+        await autoSubmitAttempt(req.db, attempt.id, 'AUTO_TIME');
+        await req.db.query('COMMIT');
+        req.dbTransactionCommitted = true;
+        return res.status(400).json({ success: false, message: 'Time expired. Your exam has been automatically submitted.' });
+      }
+    } else {
+      // Must have entered code before starting
+      if (batchStudent.status !== 'CODE_ENTERED') {
+        return res.status(400).json({
+          success: false,
+          message: 'You must enter the batch access code before starting the exam.'
+        });
+      }
+
+      // Generate server deadline
+      const deadlineAt = new Date(Date.now() + batchStudent.duration_minutes * 60 * 1000);
+      const deviceToken = crypto.randomBytes(32).toString('hex');
+
+      // Fetch all questions for this exam
+      const questionsRes = await req.db.query(
+        `SELECT id FROM questions WHERE exam_id = $1 ORDER BY id ASC`,
+        [examId]
+      );
+
+      const allQuestionIds = questionsRes.rows.map((q) => q.id);
+      const questionOrder = batchStudent.shuffle ? shuffleArray(allQuestionIds) : allQuestionIds;
+
+      // Fetch options for all questions
+      const optionsRes = await req.db.query(
+        `SELECT id, question_id FROM question_options WHERE question_id = ANY($1::int[]) ORDER BY question_id, id ASC`,
+        [allQuestionIds]
+      );
+
+      const optionsByQuestion = {};
+      for (const qId of allQuestionIds) {
+        const qOptions = optionsRes.rows.filter((o) => o.question_id === qId);
+        optionsByQuestion[qId] = batchStudent.shuffle ? shuffleArray(qOptions.map((o) => o.id)) : qOptions.map((o) => o.id);
+      }
+
+      const shuffleMap = {
+        question_ids: questionOrder,
+        options_by_question: optionsByQuestion
+      };
+
+      // Create new attempt
+      const newAttRes = await req.db.query(
+        `INSERT INTO attempts (
+           exam_id, student_id, batch_student_id, started_at, deadline_at, shuffle_map, device_token
+         )
+         VALUES ($1, $2, $3, CURRENT_TIMESTAMP, $4, $5, $6)
+         RETURNING *`,
+        [examId, student.id, batchStudent.id, deadlineAt, shuffleMap, deviceToken]
+      );
+      attempt = newAttRes.rows[0];
+
+      // Update student batch status to WRITING
+      await req.db.query(
+        `UPDATE batch_students SET status = 'WRITING' WHERE id = $1`,
+        [batchStudent.id]
+      );
+    }
+
+    // Load questions (NEVER correct_label) and assemble response according to shuffle_map
+    const fullQuestionsRes = await req.db.query(
+      `SELECT id, exam_id, type, body_text, image_url
+       FROM questions
+       WHERE exam_id = $1`,
+      [examId]
+    );
+
+    const questionMap = new Map(fullQuestionsRes.rows.map((q) => [q.id, q]));
+    const qIds = fullQuestionsRes.rows.map((q) => q.id);
+
+    const fullOptionsRes = await req.db.query(
+      `SELECT id, question_id, label, option_text, image_url
+       FROM question_options
+       WHERE question_id = ANY($1::int[])`,
+      [qIds]
+    );
+
+    const optionMap = new Map(fullOptionsRes.rows.map((o) => [o.id, o]));
+
+    // Query any previously saved answers for this attempt (for refresh support)
+    const savedAnswersRes = await req.db.query(
+      `SELECT question_id, selected_label FROM attempt_answers WHERE attempt_id = $1`,
+      [attempt.id]
+    );
+    const answersMap = {};
+    for (const ans of savedAnswersRes.rows) {
+      answersMap[ans.question_id] = ans.selected_label;
+    }
+
+    const shuffleMap = attempt.shuffle_map || {};
+    const orderedQuestionIds = shuffleMap.question_ids || fullQuestionsRes.rows.map((q) => q.id);
+    const optionsOrder = shuffleMap.options_by_question || {};
+
+    const formattedQuestions = [];
+    for (const qId of orderedQuestionIds) {
+      const q = questionMap.get(qId);
+      if (!q) continue;
+
+      const orderedOptionIds = optionsOrder[qId] || [];
+      const formattedOptions = [];
+
+      for (const optId of orderedOptionIds) {
+        const opt = optionMap.get(optId);
+        if (opt) {
+          formattedOptions.push({
+            id: opt.id,
+            label: opt.label,
+            option_text: opt.option_text,
+            body_text: opt.option_text,
+            image_url: opt.image_url
+          });
+        }
+      }
+
+      // If any options were not captured in shuffle_map, append them
+      const includedOptIds = new Set(orderedOptionIds);
+      for (const opt of fullOptionsRes.rows) {
+        if (opt.question_id === qId && !includedOptIds.has(opt.id)) {
+          formattedOptions.push({
+            id: opt.id,
+            label: opt.label,
+            option_text: opt.option_text,
+            body_text: opt.option_text,
+            image_url: opt.image_url
+          });
+        }
+      }
+
+      formattedQuestions.push({
+        id: q.id,
+        type: q.type,
+        body_text: q.body_text,
+        image_url: q.image_url,
+        options: formattedOptions,
+        saved_answer: answersMap[q.id] || null
+      });
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        attempt_id: attempt.id,
+        exam_id: examId,
+        title: batchStudent.title,
+        duration_minutes: batchStudent.duration_minutes,
+        started_at: attempt.started_at,
+        deadline_at: attempt.deadline_at,
+        device_token: attempt.device_token,
+        questions: formattedQuestions,
+        answers: answersMap
+      }
+    });
+  } catch (error) {
+    console.error('Student start exam error:', error);
+    return res.status(500).json({ success: false, message: 'Could not start exam attempt.' });
+  }
+};
+
+router.post('/student/exams/:id/start', studentStartExamHandler);
+router.post('/student/start', studentStartExamHandler);
+
+// 4. PUT save answer (single question): reject if past deadline or from a different device_token.
+const studentSaveAnswerHandler = async (req, res) => {
+  try {
+    const { student, error } = await getStudentFromUser(req);
+    if (error) return res.status(error.status).json({ success: false, message: error.message });
+
+    let attemptId = Number(req.params.attemptId);
+
+    // If route called via /student/exams/:id/answer
+    if (!attemptId && req.params.id) {
+      const examId = Number(req.params.id);
+      const attLookup = await req.db.query(
+        `SELECT id FROM attempts WHERE exam_id = $1 AND student_id = $2`,
+        [examId, student.id]
+      );
+      if (attLookup.rows.length === 0) {
+        return res.status(404).json({ success: false, message: 'Active exam attempt not found.' });
+      }
+      attemptId = attLookup.rows[0].id;
+    }
+
+    const { question_id, selected_label } = req.body;
+    if (!question_id || !selected_label) {
+      return res.status(400).json({ success: false, message: 'question_id and selected_label are required.' });
+    }
+
+    const label = String(selected_label).trim().toUpperCase();
+    if (!['A', 'B', 'C', 'D'].includes(label)) {
+      return res.status(400).json({ success: false, message: 'selected_label must be A, B, C, or D.' });
+    }
+
+    const attemptRes = await req.db.query(
+      `SELECT a.*, e.id AS exam_id
+       FROM attempts a
+       JOIN exams e ON e.id = a.exam_id
+       WHERE a.id = $1 AND a.student_id = $2`,
+      [attemptId, student.id]
+    );
+
+    if (attemptRes.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Attempt not found or access denied.' });
+    }
+
+    const attempt = attemptRes.rows[0];
+
+    if (attempt.submitted_at) {
+      return res.status(400).json({ success: false, message: 'Exam has already been submitted.' });
+    }
+
+    // Verify device token
+    const clientToken = req.headers['x-device-token'] || req.body.device_token;
+    if (!clientToken || !timingSafeCompare(String(clientToken), attempt.device_token)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Invalid device token. You cannot submit answers from a different browser or device.'
+      });
+    }
+
+    // Verify deadline
+    if (new Date() >= new Date(attempt.deadline_at)) {
+      await autoSubmitAttempt(req.db, attempt.id, 'AUTO_TIME');
+      await req.db.query('COMMIT');
+      req.dbTransactionCommitted = true;
+      return res.status(400).json({
+        success: false,
+        message: 'Time expired. Your exam has been automatically submitted.'
+      });
+    }
+
+    // Verify question belongs to this exam
+    const qCheck = await req.db.query(
+      `SELECT id FROM questions WHERE id = $1 AND exam_id = $2`,
+      [Number(question_id), attempt.exam_id]
+    );
+    if (qCheck.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Question does not belong to this exam.' });
+    }
+
+    // Save answer atomically
+    await req.db.query(
+      `INSERT INTO attempt_answers (attempt_id, question_id, selected_label, answered_at)
+       VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
+       ON CONFLICT (attempt_id, question_id)
+       DO UPDATE SET selected_label = EXCLUDED.selected_label, answered_at = EXCLUDED.answered_at`,
+      [attempt.id, Number(question_id), label]
+    );
+
+    return res.json({
+      success: true,
+      message: 'Answer saved successfully.',
+      question_id: Number(question_id),
+      selected_label: label
+    });
+  } catch (error) {
+    console.error('Save answer error:', error);
+    return res.status(500).json({ success: false, message: 'Could not save answer.' });
+  }
+};
+
+router.put('/student/attempts/:attemptId/answer', studentSaveAnswerHandler);
+router.put('/student/exams/:id/answer', studentSaveAnswerHandler);
+
+// 5. POST leave event (TAB_HIDDEN or FULLSCREEN_EXIT)
+const studentLeaveEventHandler = async (req, res) => {
+  try {
+    const { student, error } = await getStudentFromUser(req);
+    if (error) return res.status(error.status).json({ success: false, message: error.message });
+
+    let attemptId = Number(req.params.attemptId);
+
+    // If route called via /student/exams/:id/event
+    if (!attemptId && req.params.id) {
+      const examId = Number(req.params.id);
+      const attLookup = await req.db.query(
+        `SELECT id FROM attempts WHERE exam_id = $1 AND student_id = $2`,
+        [examId, student.id]
+      );
+      if (attLookup.rows.length === 0) {
+        return res.status(404).json({ success: false, message: 'Active attempt not found.' });
+      }
+      attemptId = attLookup.rows[0].id;
+    }
+
+    const { event_type } = req.body;
+    if (!['TAB_HIDDEN', 'FULLSCREEN_EXIT'].includes(event_type)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid event_type. Must be 'TAB_HIDDEN' or 'FULLSCREEN_EXIT'."
+      });
+    }
+
+    const attemptRes = await req.db.query(
+      `SELECT id, submitted_at FROM attempts WHERE id = $1 AND student_id = $2`,
+      [attemptId, student.id]
+    );
+    if (attemptRes.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Attempt not found or access denied.' });
+    }
+
+    if (!attemptRes.rows[0].submitted_at) {
+      await req.db.query(
+        `INSERT INTO attempt_events (attempt_id, event_type, occurred_at)
+         VALUES ($1, $2, CURRENT_TIMESTAMP)`,
+        [attemptId, event_type]
+      );
+    }
+
+    return res.json({
+      success: true,
+      message: 'Leave event recorded.'
+    });
+  } catch (error) {
+    console.error('Record leave event error:', error);
+    return res.status(500).json({ success: false, message: 'Could not record event.' });
+  }
+};
+
+router.post('/student/attempts/:attemptId/event', studentLeaveEventHandler);
+router.post('/student/exams/:id/event', studentLeaveEventHandler);
+
+// 6. POST submit: mark on the server, store correct_count and score (scaled to total_marks), set status SUBMITTED. Return only { success: true, message: 'Exam submitted successfully' }. The student must never receive a score.
+const studentSubmitExamHandler = async (req, res) => {
+  try {
+    const { student, error } = await getStudentFromUser(req);
+    if (error) return res.status(error.status).json({ success: false, message: error.message });
+
+    let attemptId = Number(req.params.attemptId);
+
+    // If route called via /student/exams/:id/submit
+    if (!attemptId && req.params.id) {
+      const examId = Number(req.params.id);
+      const attLookup = await req.db.query(
+        `SELECT id FROM attempts WHERE exam_id = $1 AND student_id = $2`,
+        [examId, student.id]
+      );
+      if (attLookup.rows.length === 0) {
+        return res.status(404).json({ success: false, message: 'Active attempt not found.' });
+      }
+      attemptId = attLookup.rows[0].id;
+    }
+
+    const attemptRes = await req.db.query(
+      `SELECT a.* FROM attempts a WHERE a.id = $1 AND a.student_id = $2`,
+      [attemptId, student.id]
+    );
+    if (attemptRes.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Attempt not found or access denied.' });
+    }
+
+    const attempt = attemptRes.rows[0];
+
+    // If device_token provided, verify it
+    const clientToken = req.headers['x-device-token'] || req.body.device_token;
+    if (clientToken && !timingSafeCompare(String(clientToken), attempt.device_token)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Invalid device token. You cannot submit from an unauthorized device.'
+      });
+    }
+
+    // Auto-mark and submit attempt on server
+    await autoSubmitAttempt(req.db, attempt.id, 'MANUAL');
+    await req.db.query('COMMIT');
+    req.dbTransactionCommitted = true;
+
+    // Return strictly generic success message — NEVER send score to student
+    return res.json({
+      success: true,
+      message: 'Exam submitted successfully'
+    });
+  } catch (error) {
+    console.error('Student exam submit error:', error);
+    return res.status(500).json({ success: false, message: 'Could not submit exam.' });
+  }
+};
+
+router.post('/student/attempts/:attemptId/submit', studentSubmitExamHandler);
+router.post('/student/exams/:id/submit', studentSubmitExamHandler);
+
 module.exports = router;
+
+
