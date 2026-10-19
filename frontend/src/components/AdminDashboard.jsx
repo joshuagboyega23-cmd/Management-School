@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { Users, UserCheck, FileText, CreditCard, CheckCircle, GraduationCap, ArrowLeft, LogOut, Menu, X, Clock, RefreshCw, Bell, MessageSquareText, KeyRound, Share2, Trash2, Download, UserPlus } from 'lucide-react';
+import { Users, UserCheck, FileText, CreditCard, CheckCircle, GraduationCap, ArrowLeft, LogOut, Menu, X, Clock, RefreshCw, Bell, MessageSquareText, KeyRound, Share2, Trash2, Download, UserPlus, Laptop } from 'lucide-react';
 
 import StudentsModule from './StudentsModule';
 import StaffModule from './StaffModule';
@@ -11,6 +11,7 @@ import API from '../opi';
 import { formatDateTime } from '../utils/pdfUtils';
 import PasswordInput from './PasswordInput';
 import MaterialsManager from './MaterialsManager';
+import CbtManager from './CbtManager';
 
 export default function AdminDashboard() {
   const navigate = useNavigate();
@@ -614,6 +615,12 @@ export default function AdminDashboard() {
             className={`flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition ${activeTab === 'materials' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-slate-800'}`}
           >
             <Share2 className="h-5 w-5" /> Share Materials
+          </button>
+          <button
+            onClick={() => handleTabSelect('cbt')}
+            className={`flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition ${activeTab === 'cbt' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-slate-800'}`}
+          >
+            <Laptop className="h-5 w-5" /> CBT Exams
           </button>
           <button
             onClick={() => handleTabSelect('export-data')}

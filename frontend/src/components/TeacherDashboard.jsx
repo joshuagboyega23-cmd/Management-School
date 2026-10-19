@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { GraduationCap, LogOut, FileText, CheckCircle, AlertCircle, Users, BookOpen, Plus, Download, MessageSquareText, Share2, Trash2, Pencil, Menu, X } from 'lucide-react';
+import { GraduationCap, LogOut, FileText, CheckCircle, AlertCircle, Users, BookOpen, Plus, Download, MessageSquareText, Share2, Trash2, Pencil, Menu, X, Laptop } from 'lucide-react';
 import API from '../opi';
 import { downloadGradeSheetPDF } from '../utils/pdfUtils';
 import MaterialsManager from './MaterialsManager';
+import CbtManager from './CbtManager';
 
 const filterStudentsByClass = (list, selectedClass) => {
   if (!selectedClass) return list;
@@ -293,6 +294,7 @@ export default function TeacherDashboard() {
           {[
             { id: 'overview', label: 'Overview', Icon: GraduationCap },
             { id: 'grades', label: 'Grades', Icon: FileText },
+            { id: 'cbt', label: 'CBT Exams', Icon: Laptop },
             { id: 'messages', label: 'Messages', Icon: MessageSquareText },
             { id: 'materials', label: 'Share Materials', Icon: Share2 }
           ].map(({ id, label, Icon }) => (
@@ -766,6 +768,10 @@ export default function TeacherDashboard() {
 
         {activeTab === 'materials' && (
           <MaterialsManager students={students} onNotify={showNotification} />
+        )}
+
+        {activeTab === 'cbt' && (
+          <CbtManager onNotify={showNotification} />
         )}
       </main>
     </div>

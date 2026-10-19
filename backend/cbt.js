@@ -1335,14 +1335,18 @@ const getExamStudentsHandler = async (req, res) => {
          att.started_at AS attempt_started_at,
          att.submitted_at AS attempt_submitted_at,
          att.score,
+         att.correct_count,
+         att.submit_type,
+         COALESCE(er.released_at IS NOT NULL, false) AS is_released,
          COALESCE(ev.tab_leave_count, 0)::int AS tab_leave_count
        FROM students s
        LEFT JOIN batch_students bs ON bs.student_id = s.id AND bs.batch_id = $2
        LEFT JOIN attempts att ON att.exam_id = $1 AND att.student_id = s.id
+       LEFT JOIN exam_releases er ON er.exam_id = $1 AND er.student_id = s.id
        LEFT JOIN (
          SELECT attempt_id, COUNT(*) AS tab_leave_count
          FROM attempt_events
-         WHERE event_type = 'TAB_HIDDEN'
+         WHERE event_type IN ('TAB_HIDDEN', 'FULLSCREEN_EXIT')
          GROUP BY attempt_id
        ) ev ON ev.attempt_id = att.id
        WHERE s.class_id = $3
@@ -1811,6 +1815,142 @@ const warnAttemptHandler = async (req, res) => {
 };
 
 router.post('/attempts/:attemptId/warn', warnAttemptHandler);
+
+// 8. GET attempt details (for results review: student answers vs correct keys, leave events)
+const getAttemptDetailsHandler = async (req, res) => {
+  try {
+    const attemptId = Number(req.params.attemptId);
+    if (!attemptId || !Number.isInteger(attemptId) || attemptId <= 0) {
+      return res.status(400).json({ success: false, message: 'Valid attemptId is required.' });
+    }
+
+    const { attempt, error } = await checkAttemptStaffAccess(req, attemptId);
+    if (error) return res.status(error.status).json({ success: false, message: error.message });
+
+    // Fetch student info
+    const studentRes = await req.db.query(
+      `SELECT s.id, s.full_name, s.admission_number, c.name AS class_name
+       FROM students s
+       JOIN classes c ON c.id = s.class_id
+       WHERE s.id = $1`,
+      [attempt.student_id]
+    );
+
+    // Fetch exam info
+    const examRes = await req.db.query(
+      `SELECT id, title, subject, term, total_marks, duration_minutes, max_leaves FROM exams WHERE id = $1`,
+      [attempt.exam_id]
+    );
+
+    // Fetch questions and keys
+    const questionsRes = await req.db.query(
+      `SELECT q.id, q.question_number, q.question_text, q.image_url, q.type,
+              qk.correct_label,
+              ans.selected_label,
+              ans.answered_at
+       FROM questions q
+       LEFT JOIN question_keys qk ON qk.question_id = q.id
+       LEFT JOIN attempt_answers ans ON ans.attempt_id = $1 AND ans.question_id = q.id
+       WHERE q.exam_id = $2
+       ORDER BY q.question_number ASC`,
+      [attempt.id, attempt.exam_id]
+    );
+
+    const questionIds = questionsRes.rows.map((q) => q.id);
+    let optionsByQuestion = {};
+    if (questionIds.length > 0) {
+      const optRes = await req.db.query(
+        `SELECT id, question_id, label, option_text, image_url
+         FROM question_options
+         WHERE question_id = ANY($1::int[])
+         ORDER BY label ASC`,
+        [questionIds]
+      );
+      optRes.rows.forEach((opt) => {
+        if (!optionsByQuestion[opt.question_id]) optionsByQuestion[opt.question_id] = [];
+        optionsByQuestion[opt.question_id].push(opt);
+      });
+    }
+
+    const questions = questionsRes.rows.map((q) => ({
+      ...q,
+      is_correct: q.selected_label && q.correct_label ? q.selected_label === q.correct_label : false,
+      options: optionsByQuestion[q.id] || []
+    }));
+
+    // Fetch leave events
+    const eventsRes = await req.db.query(
+      `SELECT id, event_type, occurred_at
+       FROM attempt_events
+       WHERE attempt_id = $1
+       ORDER BY occurred_at ASC`,
+      [attempt.id]
+    );
+
+    return res.json({
+      success: true,
+      data: {
+        attempt,
+        student: studentRes.rows[0] || null,
+        exam: examRes.rows[0] || null,
+        questions,
+        leave_events: eventsRes.rows
+      }
+    });
+  } catch (error) {
+    console.error('Get attempt details error:', error);
+    return res.status(500).json({ success: false, message: 'Could not fetch attempt details.' });
+  }
+};
+
+router.get('/attempts/:attemptId/details', getAttemptDetailsHandler);
+
+// 9. POST release questions for students
+const releaseQuestionsHandler = async (req, res) => {
+  try {
+    const examId = Number(req.params.id);
+    const { exam, error } = await checkExamAccess(req, examId);
+    if (error) return res.status(error.status).json({ success: false, message: error.message });
+
+    const { student_ids, release } = req.body;
+    if (!Array.isArray(student_ids) || student_ids.length === 0) {
+      return res.status(400).json({ success: false, message: 'student_ids array is required.' });
+    }
+
+    const validStudentIds = student_ids.map(Number).filter((id) => Number.isInteger(id) && id > 0);
+    const doRelease = release !== false;
+
+    if (doRelease) {
+      for (const sid of validStudentIds) {
+        await req.db.query(
+          `INSERT INTO exam_releases (exam_id, student_id, released_by, released_at)
+           VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
+           ON CONFLICT (exam_id, student_id)
+           DO UPDATE SET released_at = CURRENT_TIMESTAMP`,
+          [examId, sid, req.user.id]
+        );
+      }
+    } else {
+      await req.db.query(
+        `DELETE FROM exam_releases WHERE exam_id = $1 AND student_id = ANY($2::int[])`,
+        [examId, validStudentIds]
+      );
+    }
+
+    return res.json({
+      success: true,
+      message: doRelease
+        ? `Questions released to ${validStudentIds.length} student(s).`
+        : `Questions unreleased for ${validStudentIds.length} student(s).`,
+      count: validStudentIds.length
+    });
+  } catch (error) {
+    console.error('Release questions error:', error);
+    return res.status(500).json({ success: false, message: 'Could not update question release settings.' });
+  }
+};
+
+router.post('/exams/:id/release-questions', releaseQuestionsHandler);
 
 // =============================================================
 // STUDENT HELPER FUNCTIONS
@@ -2470,6 +2610,8 @@ const studentSaveAnswerHandler = async (req, res) => {
 router.put('/student/attempts/:attemptId/answer', studentSaveAnswerHandler);
 router.put('/student/exams/:id/answer', studentSaveAnswerHandler);
 
+const lastLeaveEventByAttempt = new Map();
+
 // 5. POST leave event (TAB_HIDDEN or FULLSCREEN_EXIT)
 const studentLeaveEventHandler = async (req, res) => {
   try {
@@ -2522,6 +2664,8 @@ const studentLeaveEventHandler = async (req, res) => {
         `SELECT COUNT(*)::int AS count FROM attempt_events WHERE attempt_id = $1`,
         [attemptId]
       );
+      await req.db.query('COMMIT');
+      req.dbTransactionCommitted = true;
       return res.json({
         leaves: currentLeavesRes.rows[0].count,
         maxLeaves,
@@ -2529,22 +2673,20 @@ const studentLeaveEventHandler = async (req, res) => {
       });
     }
 
-    // Ignore new event if the same attempt already has an event in the last 3 seconds.
-    // occurred_at is TIMESTAMPTZ so NOW() compares correctly across pool connections.
-    const recentEventRes = await req.db.query(
-      `SELECT id
-       FROM attempt_events
-       WHERE attempt_id = $1
-         AND occurred_at >= NOW() - INTERVAL '3 seconds'
-       LIMIT 1`,
-      [attemptId]
-    );
+    // Ignore new event if the same attempt already has an event in the last 2 seconds.
+    const lastEventTime = lastLeaveEventByAttempt.get(attemptId);
+    let isDebounced = false;
+    if (lastEventTime && (Date.now() - lastEventTime) < 2000) {
+      isDebounced = true;
+    }
 
-    if (recentEventRes.rows.length > 0) {
+    if (isDebounced) {
       const currentLeavesRes = await req.db.query(
         `SELECT COUNT(*)::int AS count FROM attempt_events WHERE attempt_id = $1`,
         [attemptId]
       );
+      await req.db.query('COMMIT');
+      req.dbTransactionCommitted = true;
       return res.json({
         leaves: currentLeavesRes.rows[0].count,
         maxLeaves,
@@ -2552,9 +2694,10 @@ const studentLeaveEventHandler = async (req, res) => {
       });
     }
 
-    // Save the event; occurred_at defaults to CURRENT_TIMESTAMP (TIMESTAMPTZ)
+    // Save the event with clock_timestamp()
     await req.db.query(
-      `INSERT INTO attempt_events (attempt_id, event_type) VALUES ($1, $2)`,
+      `INSERT INTO attempt_events (attempt_id, event_type, occurred_at)
+       VALUES ($1, $2, clock_timestamp())`,
       [attemptId, event_type]
     );
 
@@ -2576,6 +2719,7 @@ const studentLeaveEventHandler = async (req, res) => {
 
     // If the count is greater than or equal to the exam's max_leaves, auto-submit
     if (n >= maxLeaves) {
+      lastLeaveEventByAttempt.delete(attemptId);
       await autoSubmitAttempt(req.db, attempt.id, 'AUTO_LEAVES');
 
       if (attempt.batch_student_id) {
@@ -2605,6 +2749,9 @@ const studentLeaveEventHandler = async (req, res) => {
 
     await req.db.query('COMMIT');
     req.dbTransactionCommitted = true;
+
+    // Record timestamp after successful commit so rapid subsequent requests are debounced
+    lastLeaveEventByAttempt.set(attemptId, Date.now());
 
     return res.json({
       leaves: n,
