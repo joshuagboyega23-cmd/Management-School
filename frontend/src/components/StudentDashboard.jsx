@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { GraduationCap, LogOut, Award, CreditCard, User, AlertCircle, FileText, CheckCircle, Clock, Download, RefreshCw, Menu, X, BookOpen } from 'lucide-react';
+import { GraduationCap, LogOut, Award, CreditCard, User, AlertCircle, FileText, CheckCircle, Clock, Download, RefreshCw, Menu, X, BookOpen, ClipboardCheck } from 'lucide-react';
 import API from '../opi';
 import { downloadReportCardPDF, downloadReceiptPDF, formatDateTime } from '../utils/pdfUtils';
 
@@ -163,6 +163,9 @@ export default function StudentDashboard() {
               <Icon className="h-5 w-5" /> {label}
             </button>
           ))}
+          <button onClick={() => navigate('/student/cbt')} className="flex items-center gap-3 rounded-lg px-4 py-3 text-left text-sm font-medium text-slate-400 transition hover:bg-slate-800 hover:text-white">
+            <ClipboardCheck className="h-5 w-5" /> CBT Exams
+          </button>
         </nav>
         <div className="mt-auto space-y-2 border-t border-slate-800 pt-4">
           <button onClick={handleLogout} className="flex w-full items-center gap-2 rounded px-2 py-2 text-xs text-red-400 transition hover:text-red-300">
@@ -461,4 +464,3 @@ export default function StudentDashboard() {
     </div>
   );
 }
-

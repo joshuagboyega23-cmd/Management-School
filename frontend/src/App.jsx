@@ -12,6 +12,7 @@ import PaymentVerify from './components/PaymentVerify';
 import ProtectedRoute from './components/ProtectedRoute';
 import AdminDashboard from './components/AdminDashboard';
 import StudentDashboard from './components/StudentDashboard';
+import CbtStudent from './components/CbtStudent';
 import ParentDashboard from './components/ParentDashboard';
 import TeacherDashboard from './components/TeacherDashboard';
 
@@ -44,6 +45,15 @@ export default function App() {
           element={
             <ProtectedRoute allowedRoles={['STUDENT']}>
               <StudentDashboard />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/student/cbt"
+          element={
+            <ProtectedRoute allowedRoles={['STUDENT']}>
+              <CbtStudent />
             </ProtectedRoute>
           }
         />

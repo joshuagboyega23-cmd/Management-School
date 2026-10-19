@@ -2156,6 +2156,72 @@ const getStudentAvailableExamsHandler = async (req, res) => {
 router.get('/student/exams', getStudentAvailableExamsHandler);
 router.get('/student/available-exams', getStudentAvailableExamsHandler);
 
+const getStudentReleasedQuestionsHandler = async (req, res) => {
+  try {
+    const { student, error } = await getStudentFromUser(req);
+    if (error) return res.status(error.status).json({ success: false, message: error.message });
+
+    const questionsResult = await req.db.query(
+      `SELECT e.id AS exam_id, e.title, e.subject, e.term,
+              q.id AS question_id, q.position, q.type, q.body_text,
+              q.image_url AS question_image_url,
+              qo.id AS option_id, qo.label, qo.option_text,
+              qo.image_url AS option_image_url
+       FROM exam_releases er
+       JOIN exams e ON e.id = er.exam_id
+       JOIN questions q ON q.exam_id = e.id
+       LEFT JOIN question_options qo ON qo.question_id = q.id
+       WHERE er.student_id = $1
+         AND er.released_at IS NOT NULL
+       ORDER BY er.released_at DESC, e.id DESC, q.position ASC, qo.label ASC`,
+      [student.id]
+    );
+
+    const exams = new Map();
+    for (const row of questionsResult.rows) {
+      if (!exams.has(row.exam_id)) {
+        exams.set(row.exam_id, {
+          exam_id: row.exam_id,
+          title: row.title,
+          subject: row.subject,
+          term: row.term,
+          questions: []
+        });
+      }
+
+      const exam = exams.get(row.exam_id);
+      let question = exam.questions[exam.questions.length - 1];
+      if (!question || question.id !== row.question_id) {
+        question = {
+          id: row.question_id,
+          position: row.position,
+          type: row.type,
+          body_text: row.body_text,
+          image_url: row.question_image_url,
+          options: []
+        };
+        exam.questions.push(question);
+      }
+
+      if (row.option_id !== null) {
+        question.options.push({
+          id: row.option_id,
+          label: row.label,
+          option_text: row.option_text,
+          image_url: row.option_image_url
+        });
+      }
+    }
+
+    return res.json({ success: true, data: Array.from(exams.values()) });
+  } catch (error) {
+    console.error('Get student released questions error:', error);
+    return res.status(500).json({ success: false, message: 'Could not fetch released questions.' });
+  }
+};
+
+router.get('/student/released-questions', getStudentReleasedQuestionsHandler);
+
 // 2. POST enter code: compare with batch code (timing-safe).
 // 5 wrong attempts sets code_locked_until = now + 30s and inserts a batch_alerts row.
 // Correct code sets CODE_ENTERED and resets code_attempts to 0.
@@ -2894,5 +2960,4 @@ router.post('/student/attempts/:attemptId/submit', studentSubmitExamHandler);
 router.post('/student/exams/:id/submit', studentSubmitExamHandler);
 
 module.exports = router;
-
 
