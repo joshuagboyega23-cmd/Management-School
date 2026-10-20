@@ -731,6 +731,9 @@ router.post('/exams/:id/upload-questions', memoryUpload.single('file'), async (r
       [keyQuestionIds, keyLabels]
     );
 
+    await req.db.query('COMMIT');
+    req.dbTransactionCommitted = true;
+
     return res.status(201).json({
       success: true,
       message: `Successfully imported ${sanitizedQuestions.length} questions.`,
