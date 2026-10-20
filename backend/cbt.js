@@ -680,32 +680,56 @@ router.post('/exams/:id/upload-questions', memoryUpload.single('file'), async (r
       });
     }
 
-    // Atomic replacement: Delete old questions for this exam and insert new ones
+    // Atomic replacement: delete old questions, then insert everything in a few batched queries.
     await req.db.query('DELETE FROM questions WHERE exam_id = $1', [exam.id]);
 
+    // 1) All questions in a single query
+    const qRes = await req.db.query(
+      `INSERT INTO questions (exam_id, position, type, body_text)
+       SELECT $1::int, u.pos, u.qtype, u.body
+       FROM unnest($2::int[], $3::text[], $4::text[]) AS u(pos, qtype, body)
+       RETURNING id, position`,
+      [
+        exam.id,
+        sanitizedQuestions.map((q) => q.position),
+        sanitizedQuestions.map((q) => q.type),
+        sanitizedQuestions.map((q) => q.body_text)
+      ]
+    );
+    const idByPosition = new Map(qRes.rows.map((r) => [Number(r.position), r.id]));
+
+    // 2) Collect all options and answer keys
+    const optQuestionIds = [];
+    const optLabels = [];
+    const optTexts = [];
+    const keyQuestionIds = [];
+    const keyLabels = [];
     for (const q of sanitizedQuestions) {
-      const qRes = await req.db.query(
-        `INSERT INTO questions (exam_id, position, type, body_text)
-         VALUES ($1, $2, $3, $4)
-         RETURNING id`,
-        [exam.id, q.position, q.type, q.body_text]
-      );
-      const questionId = qRes.rows[0].id;
-
+      const questionId = idByPosition.get(q.position);
       for (const opt of q.options) {
-        await req.db.query(
-          `INSERT INTO question_options (question_id, label, option_text)
-           VALUES ($1, $2, $3)`,
-          [questionId, opt.label, opt.text]
-        );
+        optQuestionIds.push(questionId);
+        optLabels.push(opt.label);
+        optTexts.push(opt.text);
       }
-
-      await req.db.query(
-        `INSERT INTO question_keys (question_id, correct_label)
-         VALUES ($1, $2)`,
-        [questionId, q.correct]
-      );
+      keyQuestionIds.push(questionId);
+      keyLabels.push(q.correct);
     }
+
+    // 3) All options in one query
+    await req.db.query(
+      `INSERT INTO question_options (question_id, label, option_text)
+       SELECT u.qid, u.lbl, u.txt
+       FROM unnest($1::int[], $2::text[], $3::text[]) AS u(qid, lbl, txt)`,
+      [optQuestionIds, optLabels, optTexts]
+    );
+
+    // 4) All answer keys in one query
+    await req.db.query(
+      `INSERT INTO question_keys (question_id, correct_label)
+       SELECT u.qid, u.lbl
+       FROM unnest($1::int[], $2::text[]) AS u(qid, lbl)`,
+      [keyQuestionIds, keyLabels]
+    );
 
     return res.status(201).json({
       success: true,

@@ -1024,6 +1024,10 @@ export default function AdminDashboard() {
           <MaterialsManager students={students} onNotify={showNotification} />
         )}
 
+        {activeTab === 'cbt' && (
+          <CbtManager onNotify={showNotification} />
+        )}
+
         {activeTab === 'export-data' && (
           <div className="max-w-2xl rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
             <h3 className="mb-4 text-lg font-bold text-slate-800">Export Data</h3>
