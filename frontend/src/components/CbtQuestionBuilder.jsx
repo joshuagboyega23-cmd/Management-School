@@ -22,9 +22,12 @@ export default function CbtQuestionBuilder({ exam, onBack, onNotify }) {
     if (!exam?.id) return;
     try {
       setLoading(true);
-      const res = await API.get(`/cbt/exams/${exam.id}/preview`);
-      const previewData = res.data?.data;
-      setQuestions(Array.isArray(previewData?.questions) ? previewData.questions : Array.isArray(previewData) ? previewData : []);
+      const res = await API.get(`/cbt/exams/${exam.id}`);
+      const questions = Array.isArray(res.data?.data?.questions) ? res.data.data.questions : [];
+      setQuestions(questions.map((q) => ({
+        ...q,
+        question_text: q.body_text ?? q.question_text ?? ''
+      })));
     } catch (err) {
       onNotify('error', err.response?.data?.message || 'Could not load exam questions.');
     } finally {
