@@ -23,7 +23,8 @@ export default function CbtQuestionBuilder({ exam, onBack, onNotify }) {
     try {
       setLoading(true);
       const res = await API.get(`/cbt/exams/${exam.id}/preview`);
-      setQuestions(Array.isArray(res.data?.data) ? res.data.data : []);
+      const previewData = res.data?.data;
+      setQuestions(Array.isArray(previewData?.questions) ? previewData.questions : Array.isArray(previewData) ? previewData : []);
     } catch (err) {
       onNotify('error', err.response?.data?.message || 'Could not load exam questions.');
     } finally {
