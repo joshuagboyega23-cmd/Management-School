@@ -153,8 +153,8 @@ function Navbar({ onEnterPortal }) {
             <GraduationCap className="h-7 w-7 text-white" />
           </div>
           <div>
-            <p className="font-extrabold text-blue-900 leading-tight text-base">{SCHOOL.name}</p>
-            <p className="text-xs text-blue-600 leading-tight hidden sm:block">Est. {SCHOOL.established}</p>
+            <p className={`font-extrabold leading-tight text-base transition-colors ${scrolled ? 'text-blue-900' : 'text-white'}`}>{SCHOOL.name}</p>
+            <p className={`text-xs leading-tight hidden sm:block transition-colors ${scrolled ? 'text-blue-600' : 'text-blue-200'}`}>Est. {SCHOOL.established}</p>
           </div>
         </div>
 
@@ -162,7 +162,7 @@ function Navbar({ onEnterPortal }) {
         <div className="hidden md:flex items-center gap-6">
           {links.map((l) => (
             <a key={l} href={`#${l.toLowerCase()}`}
-              className="text-sm font-medium text-slate-700 hover:text-blue-700 transition">
+              className={`text-sm font-medium transition ${scrolled ? 'text-slate-700 hover:text-blue-700' : 'text-white hover:text-yellow-300'}`}>
               {l}
             </a>
           ))}
@@ -172,7 +172,7 @@ function Navbar({ onEnterPortal }) {
         <div className="hidden md:flex items-center gap-3">
           <Link
             to="/login"
-            className="text-slate-700 hover:text-blue-700 text-xs font-semibold px-3 py-2 rounded-lg transition"
+            className={`text-xs font-semibold px-3 py-2 rounded-lg transition ${scrolled ? 'text-slate-700 hover:text-blue-700' : 'text-white hover:text-yellow-300'}`}
           >
             Student & Parent Login
           </Link>
@@ -184,7 +184,7 @@ function Navbar({ onEnterPortal }) {
           </Link>
           <Link
             to="/admin-login"
-            className="bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold px-3.5 py-2 rounded-lg transition flex items-center gap-1.5 shadow"
+            className={`bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold px-3.5 py-2 rounded-lg transition flex items-center gap-1.5 shadow ${scrolled ? '' : 'ring-1 ring-white/40'}`}
           >
             Admin Portal
           </Link>
@@ -192,7 +192,7 @@ function Navbar({ onEnterPortal }) {
 
         {/* Mobile hamburger */}
         <button className="md:hidden" onClick={() => setOpen(!open)}>
-          {open ? <X className="h-6 w-6 text-slate-700" /> : <Menu className="h-6 w-6 text-slate-700" />}
+          {open ? <X className={`h-6 w-6 ${scrolled ? 'text-slate-700' : 'text-white'}`} /> : <Menu className={`h-6 w-6 ${scrolled ? 'text-slate-700' : 'text-white'}`} />}
         </button>
       </div>
 
