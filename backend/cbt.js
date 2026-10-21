@@ -132,10 +132,6 @@ async function checkExamAccess(req, examId) {
     if (Number(exam.created_by) !== Number(req.user.id)) {
       return { error: { status: 403, message: 'Access denied: You can only manage your own exams.' } };
     }
-    // Class homeroom check (if assigned)
-    if (exam.homeroom_teacher_id && Number(exam.homeroom_teacher_id) !== Number(req.user.id)) {
-      return { error: { status: 403, message: 'Access denied: You can only manage exams for classes you teach.' } };
-    }
   }
 
   return { exam };
@@ -288,19 +284,13 @@ router.post('/exams', async (req, res) => {
       maxLeavesVal = parsedLeaves;
     }
 
-    // Validate class existence & teacher assignment
+    // Validate class existence
     const classResult = await req.db.query(
       'SELECT id, name, homeroom_teacher_id FROM classes WHERE id = $1',
       [classId]
     );
     if (classResult.rows.length === 0) {
       return res.status(400).json({ success: false, message: 'Selected class does not exist.' });
-    }
-
-    const classRow = classResult.rows[0];
-    const isAdmin = ['ADMIN', 'SUPERADMIN'].includes(req.user.role);
-    if (!isAdmin && classRow.homeroom_teacher_id && Number(classRow.homeroom_teacher_id) !== Number(req.user.id)) {
-      return res.status(403).json({ success: false, message: 'Access denied: You can only create exams for classes you teach.' });
     }
 
     const insertResult = await req.db.query(
@@ -452,11 +442,6 @@ router.put('/exams/:id', async (req, res) => {
         return res.status(400).json({ success: false, message: 'Selected class does not exist.' });
       }
 
-      const isAdmin = ['ADMIN', 'SUPERADMIN'].includes(req.user.role);
-      const classRow = classResult.rows[0];
-      if (!isAdmin && classRow.homeroom_teacher_id && Number(classRow.homeroom_teacher_id) !== Number(req.user.id)) {
-        return res.status(403).json({ success: false, message: 'Access denied: You can only assign exams to classes you teach.' });
-      }
       targetClassId = parsedClassId;
     }
 
@@ -1284,9 +1269,6 @@ async function checkBatchAccess(req, batchId) {
     if (Number(batch.created_by) !== Number(req.user.id)) {
       return { error: { status: 403, message: 'Access denied: You can only manage batches for your own exams.' } };
     }
-    if (batch.homeroom_teacher_id && Number(batch.homeroom_teacher_id) !== Number(req.user.id)) {
-      return { error: { status: 403, message: 'Access denied: You can only manage batches for classes you teach.' } };
-    }
   }
 
   return { batch };
@@ -1313,9 +1295,6 @@ async function checkAttemptStaffAccess(req, attemptId) {
   if (!isAdmin) {
     if (Number(attempt.created_by) !== Number(req.user.id)) {
       return { error: { status: 403, message: 'Access denied: You can only manage attempts for your own exams.' } };
-    }
-    if (attempt.homeroom_teacher_id && Number(attempt.homeroom_teacher_id) !== Number(req.user.id)) {
-      return { error: { status: 403, message: 'Access denied: You can only manage attempts for classes you teach.' } };
     }
   }
 
