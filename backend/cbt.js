@@ -92,6 +92,30 @@ const requireRole = (...roles) => {
   };
 };
 
+async function logCbtActivity(req, targetDescription) {
+  try {
+    await req.db.query('SAVEPOINT cbt_activity_log');
+    await req.db.query(
+      `INSERT INTO activity_log (actor_id, actor_name, actor_role, action, target_description)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [
+        req.user.id,
+        req.user.email || (['ADMIN', 'SUPERADMIN'].includes(req.user.role) ? 'Administrator' : 'Teacher'),
+        req.user.role,
+        'CBT',
+        targetDescription
+      ]
+    );
+    await req.db.query('RELEASE SAVEPOINT cbt_activity_log');
+  } catch (err) {
+    console.error('CBT activity log error:', err);
+    try {
+      await req.db.query('ROLLBACK TO SAVEPOINT cbt_activity_log');
+      await req.db.query('RELEASE SAVEPOINT cbt_activity_log');
+    } catch (e) {}
+  }
+}
+
 // Authentication middleware for all CBT routes
 router.use(verifyToken);
 
@@ -308,6 +332,11 @@ router.post('/exams', async (req, res) => {
         shuffleVal,
         maxLeavesVal
       ]
+    );
+
+    await logCbtActivity(
+      req,
+      `Created exam: ${String(subject).trim()} — ${String(term).trim()} — ${classResult.rows[0].name} (${String(title).trim()})`
     );
 
     return res.status(201).json({
@@ -533,31 +562,17 @@ router.delete('/exams/:id', async (req, res) => {
         return res.status(409).json({ success: false, message: 'This exam has a live batch. End the batch before deleting the exam.' });
       }
 
-      try {
-        await req.db.query('SAVEPOINT exam_deletion_activity_log');
-        const attemptCountResult = await req.db.query(
-          'SELECT COUNT(*)::int AS attempt_count FROM attempts WHERE exam_id = $1',
-          [exam.id]
-        );
-        const attemptCount = Number(attemptCountResult.rows[0].attempt_count);
-        await req.db.query(
-          `INSERT INTO activity_log (actor_id, actor_name, actor_role, action, target_description)
-           VALUES ($1, $2, $3, $4, $5)`,
-          [
-            req.user.id,
-            req.user.email || 'Administrator',
-            req.user.role,
-            'Deleted published exam',
-            `${exam.title}; ${attemptCount} student attempts`
-          ]
-        );
-        await req.db.query('RELEASE SAVEPOINT exam_deletion_activity_log');
-      } catch (logError) {
-        console.error('Delete exam activity log error:', logError);
-        await req.db.query('ROLLBACK TO SAVEPOINT exam_deletion_activity_log');
-        await req.db.query('RELEASE SAVEPOINT exam_deletion_activity_log');
-      }
     }
+
+    const attemptCountResult = await req.db.query(
+      'SELECT COUNT(*)::int AS attempt_count FROM attempts WHERE exam_id = $1',
+      [exam.id]
+    );
+    const attemptCount = Number(attemptCountResult.rows[0].attempt_count);
+    await logCbtActivity(
+      req,
+      `Deleted ${exam.status === 'DRAFT' ? 'draft' : 'published'} exam: ${exam.title}; ${attemptCount} student attempts`
+    );
 
     await req.db.query('DELETE FROM exams WHERE id = $1', [exam.id]);
     return res.json({ success: true, message: 'Exam deleted successfully.' });
@@ -750,6 +765,11 @@ router.post('/exams/:id/upload-questions', memoryUpload.single('file'), async (r
        SELECT u.qid, u.lbl
        FROM unnest($1::int[], $2::text[]) AS u(qid, lbl)`,
       [keyQuestionIds, keyLabels]
+    );
+
+    await logCbtActivity(
+      req,
+      `Uploaded ${sanitizedQuestions.length} questions: ${exam.subject} — ${exam.term} — ${exam.class_name}`
     );
 
     await req.db.query('COMMIT');
@@ -1137,6 +1157,11 @@ router.post('/exams/:id/publish', async (req, res) => {
       [exam.id]
     );
 
+    await logCbtActivity(
+      req,
+      `Published exam: ${exam.subject} — ${exam.term} — ${exam.class_name}`
+    );
+
     return res.json({
       success: true,
       message: 'Exam published successfully and questions are locked.',
@@ -1167,7 +1192,7 @@ router.post('/questions/:questionId/correct-key', async (req, res) => {
     }
 
     const qResult = await req.db.query(
-      `SELECT q.*, e.id AS exam_id, e.created_by, e.total_marks, c.homeroom_teacher_id
+      `SELECT q.*, e.id AS exam_id, e.created_by, e.total_marks, e.subject, e.term, c.name AS class_name, c.homeroom_teacher_id
        FROM questions q
        JOIN exams e ON e.id = q.exam_id
        JOIN classes c ON c.id = e.class_id
@@ -1266,6 +1291,11 @@ router.post('/questions/:questionId/correct-key', async (req, res) => {
       );
       remarkedCount++;
     }
+
+    await logCbtActivity(
+      req,
+      `Corrected answer key Q${question.position} (${oldLabel || 'unset'} to ${label}): ${question.subject} — ${question.term} — ${question.class_name}`
+    );
 
     return res.json({
       success: true,
@@ -1490,6 +1520,11 @@ const startBatchHandler = async (req, res) => {
     await req.db.query(
       `UPDATE exams SET questions_locked = true WHERE id = $1`,
       [examId]
+    );
+
+    await logCbtActivity(
+      req,
+      `Started exam batch (${cleanStudentIds.length} students): ${exam.subject} — ${exam.term} — ${exam.class_name}`
     );
 
     return res.status(201).json({
@@ -1976,6 +2011,13 @@ const releaseQuestionsHandler = async (req, res) => {
       await req.db.query(
         `DELETE FROM exam_releases WHERE exam_id = $1 AND student_id = ANY($2::int[])`,
         [examId, validStudentIds]
+      );
+    }
+
+    if (doRelease) {
+      await logCbtActivity(
+        req,
+        `Released questions to ${validStudentIds.length} students: ${exam.subject} — ${exam.term} — ${exam.class_name}`
       );
     }
 

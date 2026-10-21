@@ -1061,6 +1061,7 @@ export default function AdminDashboard() {
               <select value={activityFilter} onChange={(e) => setActivityFilter(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm">
                 <option value="All">All</option>
                 <option value="Grades">Grades</option>
+                <option value="CBT">CBT</option>
                 <option value="Passwords">Passwords</option>
                 <option value="Admin">Admin</option>
                 <option value="Promotions">Promotions</option>
