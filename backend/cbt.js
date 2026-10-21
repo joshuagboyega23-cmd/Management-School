@@ -513,14 +513,50 @@ router.put('/exams/:id', async (req, res) => {
   }
 });
 
-// Delete Exam (while status is DRAFT)
+// Delete Exam
 router.delete('/exams/:id', async (req, res) => {
   try {
     const { error, exam } = await checkExamAccess(req, req.params.id);
     if (error) return res.status(error.status).json({ success: false, message: error.message });
 
+    const isAdmin = ['ADMIN', 'SUPERADMIN'].includes(req.user.role);
     if (exam.status !== 'DRAFT') {
-      return res.status(400).json({ success: false, message: 'Only DRAFT exams can be deleted.' });
+      if (!isAdmin) {
+        return res.status(403).json({ success: false, message: 'Only an administrator can delete a published exam.' });
+      }
+
+      const liveBatchResult = await req.db.query(
+        `SELECT 1 FROM exam_batches WHERE exam_id = $1 AND status = 'LIVE' LIMIT 1`,
+        [exam.id]
+      );
+      if (liveBatchResult.rows.length > 0) {
+        return res.status(409).json({ success: false, message: 'This exam has a live batch. End the batch before deleting the exam.' });
+      }
+
+      try {
+        await req.db.query('SAVEPOINT exam_deletion_activity_log');
+        const attemptCountResult = await req.db.query(
+          'SELECT COUNT(*)::int AS attempt_count FROM attempts WHERE exam_id = $1',
+          [exam.id]
+        );
+        const attemptCount = Number(attemptCountResult.rows[0].attempt_count);
+        await req.db.query(
+          `INSERT INTO activity_log (actor_id, actor_name, actor_role, action, target_description)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [
+            req.user.id,
+            req.user.email || 'Administrator',
+            req.user.role,
+            'Deleted published exam',
+            `${exam.title}; ${attemptCount} student attempts`
+          ]
+        );
+        await req.db.query('RELEASE SAVEPOINT exam_deletion_activity_log');
+      } catch (logError) {
+        console.error('Delete exam activity log error:', logError);
+        await req.db.query('ROLLBACK TO SAVEPOINT exam_deletion_activity_log');
+        await req.db.query('RELEASE SAVEPOINT exam_deletion_activity_log');
+      }
     }
 
     await req.db.query('DELETE FROM exams WHERE id = $1', [exam.id]);
@@ -2966,4 +3002,3 @@ router.post('/student/attempts/:attemptId/submit', studentSubmitExamHandler);
 router.post('/student/exams/:id/submit', studentSubmitExamHandler);
 
 module.exports = router;
-

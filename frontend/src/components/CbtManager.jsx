@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Plus, Edit, Trash2, Eye, Play, Award, FileSpreadsheet, CheckCircle, 
   Clock, ShieldAlert, Sparkles, Filter, RefreshCw, BookOpen, Layers
@@ -8,12 +8,14 @@ import CbtQuestionBuilder from './CbtQuestionBuilder';
 import CbtLiveBatch from './CbtLiveBatch';
 import CbtResults from './CbtResults';
 
-export default function CbtManager({ onNotify, initialView = 'list' }) {
+export default function CbtManager({ onNotify, initialView = 'list', isAdmin = false }) {
   const [exams, setExams] = useState([]);
   const [classes, setClasses] = useState([]);
   const [loading, setLoading] = useState(false);
   const [currentView, setCurrentView] = useState(initialView); // 'list' | 'builder' | 'live' | 'results'
   const [selectedExam, setSelectedExam] = useState(null);
+  const silentRefreshState = useRef({ currentView, selectedExam, onNotify });
+  silentRefreshState.current = { currentView, selectedExam, onNotify };
 
   // Filter state
   const [selectedClassFilter, setSelectedClassFilter] = useState('');
@@ -94,6 +96,38 @@ export default function CbtManager({ onNotify, initialView = 'list' }) {
     fetchClassesAndExams();
   }, []);
 
+  const fetchExamsSilently = async () => {
+    try {
+      const examRes = await API.get('/cbt/exams');
+      const updatedExams = Array.isArray(examRes.data?.data) ? examRes.data.data : [];
+      setExams(updatedExams);
+      return updatedExams;
+    } catch {
+      return null;
+    }
+  };
+
+  useEffect(() => {
+    const refreshAndCheckSelectedExam = async () => {
+      const updatedExams = await fetchExamsSilently();
+      if (!updatedExams) return;
+
+      const { currentView: view, selectedExam: selected, onNotify: notify } = silentRefreshState.current;
+      if (view !== 'list' && selected && !updatedExams.some((exam) => Number(exam.id) === Number(selected.id))) {
+        notify('error', 'This exam was deleted by the administrator.');
+        setCurrentView('list');
+        setSelectedExam(null);
+      }
+    };
+
+    const intervalId = setInterval(refreshAndCheckSelectedExam, 30000);
+    window.addEventListener('focus', refreshAndCheckSelectedExam);
+    return () => {
+      clearInterval(intervalId);
+      window.removeEventListener('focus', refreshAndCheckSelectedExam);
+    };
+  }, []);
+
   // Open Create Exam
   const handleOpenCreateModal = () => {
     setExamModal({
@@ -166,11 +200,13 @@ export default function CbtManager({ onNotify, initialView = 'list' }) {
 
   // Delete Exam
   const handleDeleteExam = async (exam) => {
-    if (exam.status !== 'DRAFT') {
-      onNotify('error', 'Only DRAFT exams can be deleted.');
+    if (exam.status !== 'DRAFT' && !isAdmin) {
       return;
     }
-    if (!window.confirm(`Permanently delete exam "${exam.title}"?`)) return;
+    const confirmation = exam.status === 'DRAFT'
+      ? `Permanently delete exam "${exam.title}"?`
+      : `Delete "${exam.title}"? This exam is published and has ${exam.attempt_count ?? 0} student attempts. Deleting it permanently removes the questions, student answers and scores. Export the results first if you need them. This cannot be undone.`;
+    if (!window.confirm(confirmation)) return;
 
     try {
       setLoading(true);
@@ -409,16 +445,18 @@ export default function CbtManager({ onNotify, initialView = 'list' }) {
                   </button>
                 </div>
 
-                {/* Edit / Delete for DRAFT only */}
-                {exam.status === 'DRAFT' && (
+                {/* Edit for DRAFT; admins can also delete published exams */}
+                {(exam.status === 'DRAFT' || isAdmin) && (
                   <div className="flex items-center gap-1">
-                    <button
-                      onClick={() => handleOpenEditModal(exam)}
-                      className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition"
-                      title="Edit Exam"
-                    >
-                      <Edit className="h-4 w-4" />
-                    </button>
+                    {exam.status === 'DRAFT' && (
+                      <button
+                        onClick={() => handleOpenEditModal(exam)}
+                        className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition"
+                        title="Edit Exam"
+                      >
+                        <Edit className="h-4 w-4" />
+                      </button>
+                    )}
                     <button
                       onClick={() => handleDeleteExam(exam)}
                       className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition"
@@ -614,4 +652,3 @@ export default function CbtManager({ onNotify, initialView = 'list' }) {
     </div>
   );
 }
-

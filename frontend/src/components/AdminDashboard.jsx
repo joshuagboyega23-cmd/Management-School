@@ -1025,7 +1025,7 @@ export default function AdminDashboard() {
         )}
 
         {activeTab === 'cbt' && (
-          <CbtManager onNotify={showNotification} />
+          <CbtManager onNotify={showNotification} isAdmin />
         )}
 
         {activeTab === 'export-data' && (
@@ -1336,4 +1336,3 @@ export default function AdminDashboard() {
     </div>
   );
 }
-
