@@ -2511,13 +2511,28 @@ app.post('/api/payments/webhook', async (req, res) => {
 
 app.get('/api/payments/history', verifyToken, async (req, res) => {
   try {
+    let paymentFilter = '';
+    let queryParams = [];
+
+    if (req.user.role === 'PARENT') {
+      paymentFilter = 'WHERE fp.student_id IN (SELECT student_id FROM parent_student_links WHERE parent_user_id = $1)';
+      queryParams = [req.user.id];
+    } else if (req.user.role === 'STUDENT') {
+      paymentFilter = 'WHERE fp.student_id IN (SELECT id FROM students WHERE user_id = $1)';
+      queryParams = [req.user.id];
+    } else if (!['ADMIN', 'SUPERADMIN'].includes(req.user.role)) {
+      return res.status(403).json({ success: false, message: 'Access denied.' });
+    }
+
     const payments = await (req.db || pool).query(
       `SELECT fp.id, fp.student_id, fp.amount, fp.reference, fp.status, fp.term, fp.created_at,
               s.admission_number, COALESCE(u.full_name, s.full_name) AS student_name
        FROM fee_payments fp
        JOIN students s ON fp.student_id = s.id
        LEFT JOIN users u ON s.user_id = u.id
-       ORDER BY fp.created_at DESC`
+       ${paymentFilter}
+       ORDER BY fp.created_at DESC`,
+      queryParams
     );
     res.json({ success: true, data: payments.rows });
   } catch (error) {
