@@ -12,6 +12,7 @@ export default function ParentDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [selectedChildId, setSelectedChildId] = useState(null);
+  const [feeBalances, setFeeBalances] = useState([]);
   const [notification, setNotification] = useState({ type: '', text: '' });
   const currentYear = new Date().getFullYear();
   const [paymentForm, setPaymentForm] = useState(() => {
@@ -33,6 +34,16 @@ export default function ParentDashboard() {
   const [replyText, setReplyText] = useState('');
   const [messageForm, setMessageForm] = useState({ subject: '', body: '' });
 
+  const fetchFeeBalances = async (childId) => {
+    if (!childId) return;
+    try {
+      const res = await API.get(`/payments/balance/${childId}`);
+      setFeeBalances(Array.isArray(res.data?.data) ? res.data.data : []);
+    } catch {
+      setFeeBalances([]);
+    }
+  };
+
   const fetchChildren = async () => {
     try {
       setLoading(true);
@@ -41,6 +52,7 @@ export default function ParentDashboard() {
         setChildren(res.data.data);
         if (res.data.data.length > 0 && !selectedChildId) {
           setSelectedChildId(res.data.data[0].id);
+          fetchFeeBalances(res.data.data[0].id);
         }
       }
     } catch (err) {
@@ -86,6 +98,9 @@ export default function ParentDashboard() {
       const refreshRes = await API.get('/parent/children');
       if (refreshRes.data.success) {
         setChildren(refreshRes.data.data);
+      }
+      if (selectedChild) {
+        fetchFeeBalances(selectedChild.id);
       }
     } catch (err) {
       showNotification('error', err.response?.data?.message || 'Could not verify payment status.');
@@ -350,7 +365,10 @@ export default function ParentDashboard() {
               {children.map((child) => (
                 <button
                   key={child.id}
-                  onClick={() => setSelectedChildId(child.id)}
+                onClick={() => {
+                  setSelectedChildId(child.id);
+                  fetchFeeBalances(child.id);
+                }}
                   className={`w-full text-left p-4 rounded-xl border transition ${
                     selectedChildId === child.id
                       ? 'bg-blue-600 text-white border-blue-600 shadow-md'
@@ -447,6 +465,21 @@ export default function ParentDashboard() {
                     </h3>
                   </div>
 
+                  {feeBalances.length > 0 && (
+                    <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                      {feeBalances.map((balance) => (
+                        <div key={balance.term} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                          <h4 className="mb-3 text-sm font-bold text-slate-800">{balance.term}</h4>
+                          <dl className="space-y-2 text-xs">
+                            <div className="flex justify-between gap-2"><dt className="text-slate-500">Fee</dt><dd className="font-semibold text-slate-800">{balance.fee === null ? 'Fee not set' : `₦${Number(balance.fee).toLocaleString()}`}</dd></div>
+                            <div className="flex justify-between gap-2"><dt className="text-slate-500">Paid</dt><dd className="font-semibold text-slate-800">₦{Number(balance.paid).toLocaleString()}</dd></div>
+                            <div className="flex justify-between gap-2"><dt className="text-slate-500">Outstanding</dt><dd className="font-semibold text-slate-800">{balance.outstanding === null ? '—' : `₦${Number(balance.outstanding).toLocaleString()}`}</dd></div>
+                          </dl>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
                   {(selectedChild.paymentHistory || []).length === 0 ? (
                     <p className="text-sm text-slate-500 py-4 text-center">No payment history recorded.</p>
                   ) : (
@@ -459,6 +492,7 @@ export default function ParentDashboard() {
                             <th className="pb-3">Amount</th>
                             <th className="pb-3">Status</th>
                             <th className="pb-3">Date &amp; Time</th>
+                            <th className="pb-3">Receipt</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 text-slate-700">
@@ -476,6 +510,27 @@ export default function ParentDashboard() {
                               </td>
                               <td className="py-3 text-xs text-slate-400">
                                 {formatDateTime(p.created_at)}
+                              </td>
+                              <td className="py-3">
+                                {p.status === 'SUCCESS' && (
+                                  <button
+                                    onClick={() => {
+                                      const balance = feeBalances.find((item) => String(p.term || 'First Term').startsWith(item.term));
+                                      downloadReceiptPDF({
+                                        ...p,
+                                        paidAt: p.created_at,
+                                        ...(balance && balance.fee !== null ? {
+                                          fee: Number(balance.fee),
+                                          totalPaid: Number(balance.paid),
+                                          outstanding: Number(balance.outstanding)
+                                        } : {})
+                                      });
+                                    }}
+                                    className="whitespace-nowrap rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-xs font-semibold text-blue-700 transition hover:bg-blue-100"
+                                  >
+                                    Download Receipt
+                                  </button>
+                                )}
                               </td>
                             </tr>
                           ))}
@@ -510,7 +565,15 @@ export default function ParentDashboard() {
                       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                         <div>
                           <label className="mb-1 block text-xs font-semibold text-slate-600">Term</label>
-                          <select value={paymentForm.term} onChange={(e) => setPaymentForm({ ...paymentForm, term: e.target.value })} required className="w-full rounded-lg border border-slate-300 p-2.5 text-sm">
+                          <select value={paymentForm.term} onChange={(e) => {
+                            const term = e.target.value;
+                            const balance = feeBalances.find((item) => term.startsWith(item.term));
+                            setPaymentForm((current) => ({
+                              ...current,
+                              term,
+                              ...(balance && balance.outstanding !== null ? { amount: String(balance.outstanding) } : {})
+                            }));
+                          }} required className="w-full rounded-lg border border-slate-300 p-2.5 text-sm">
                             {['First Term', 'Second Term', 'Third Term'].map((term) => <option key={term} value={`${term} ${currentYear}`}>{term} {currentYear}</option>)}
                           </select>
                         </div>
@@ -530,8 +593,8 @@ export default function ParentDashboard() {
                         <p>Total confirmed payments: <strong>₦{(selectedChild.paymentHistory || []).filter((payment) => payment.status === 'SUCCESS').reduce((total, payment) => total + Number(payment.amount || 0), 0).toLocaleString()}</strong></p>
                         <p>Pending payments: <strong>{(selectedChild.paymentHistory || []).filter((payment) => payment.status === 'PENDING').length}</strong></p>
                       </div>
-                      <button type="submit" disabled={paymentLoading || Number(paymentForm.amount) <= 0} className="w-full rounded-lg bg-blue-600 px-4 py-3 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50">
-                        {paymentLoading ? 'Connecting to Paystack...' : 'Pay via Paystack'}
+                      <button type="submit" disabled={paymentLoading || Number(paymentForm.amount) <= 0 || feeBalances.some((balance) => paymentForm.term.startsWith(balance.term) && balance.fee !== null && balance.outstanding === 0)} className="w-full rounded-lg bg-blue-600 px-4 py-3 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50">
+                        {feeBalances.some((balance) => paymentForm.term.startsWith(balance.term) && balance.fee !== null && balance.outstanding === 0) ? 'Fully paid' : paymentLoading ? 'Connecting to Paystack...' : 'Pay via Paystack'}
                       </button>
                     </form>
                   )}
@@ -636,4 +699,3 @@ export default function ParentDashboard() {
     </div>
   );
 }
-

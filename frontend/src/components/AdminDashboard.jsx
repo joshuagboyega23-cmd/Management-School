@@ -29,6 +29,9 @@ export default function AdminDashboard() {
   const [pendingPayments, setPendingPayments] = useState([]);
   const [paymentHistory, setPaymentHistory] = useState([]);
   const [verifyingRef, setVerifyingRef] = useState('');
+  const [feeRows, setFeeRows] = useState([]);
+  const [feeForm, setFeeForm] = useState({ classId: '', term: 'First Term', amount: '' });
+  const [savingFee, setSavingFee] = useState(false);
   const [announcementForm, setAnnouncementForm] = useState({
     title: '',
     message: '',
@@ -157,6 +160,34 @@ export default function AdminDashboard() {
     }
   };
 
+  const fetchFeeRows = async () => {
+    try {
+      const res = await API.get('/fees');
+      setFeeRows(Array.isArray(res.data?.data) ? res.data.data : []);
+    } catch (err) {
+      console.error('Error fetching school fees:', err);
+      setFeeRows([]);
+    }
+  };
+
+  const handleFeeSubmit = async (e) => {
+    e.preventDefault();
+    try {
+      setSavingFee(true);
+      await API.put('/fees', {
+        classId: Number(feeForm.classId),
+        term: feeForm.term,
+        amount: Number(feeForm.amount)
+      });
+      showNotification('success', 'School fee saved successfully.');
+      await fetchFeeRows();
+    } catch (err) {
+      showNotification('error', err.response?.data?.message || 'Could not save school fee.');
+    } finally {
+      setSavingFee(false);
+    }
+  };
+
   const fetchAnnouncements = async () => {
     try {
       const res = await API.get('/announcements');
@@ -269,6 +300,9 @@ export default function AdminDashboard() {
   const handleTabSelect = (tab) => {
     setActiveTab(tab);
     setIsSidebarOpen(false);
+    if (tab === 'fees') {
+      fetchFeeRows();
+    }
   };
 
   // 1. Add Student Action
@@ -598,6 +632,12 @@ export default function AdminDashboard() {
           >
             <CreditCard className="h-5 w-5" /> Fee Payments
           </button>
+          <button
+            onClick={() => handleTabSelect('fees')}
+            className={`flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition ${activeTab === 'fees' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-slate-800'}`}
+          >
+            <CreditCard className="h-5 w-5" /> Fees
+          </button>
           <button 
             onClick={() => handleTabSelect('announcements')}
             className={`flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition ${activeTab === 'announcements' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-slate-800'}`}
@@ -812,6 +852,117 @@ export default function AdminDashboard() {
               paymentHistory={paymentHistory}
               onProcessPayment={handlePaymentSubmit} 
             />
+          </div>
+        )}
+
+        {activeTab === 'fees' && (
+          <div className="space-y-6">
+            <section className="max-w-2xl rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <h3 className="mb-4 text-lg font-bold text-slate-800">Set School Fees</h3>
+              <form onSubmit={handleFeeSubmit} className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                  <label htmlFor="fee-class" className="mb-1 block text-xs font-semibold text-slate-600">Class</label>
+                  <select
+                    id="fee-class"
+                    value={feeForm.classId}
+                    onChange={(e) => setFeeForm({ ...feeForm, classId: e.target.value })}
+                    className="w-full rounded-lg border border-slate-300 bg-white p-2.5 text-sm"
+                    required
+                  >
+                    <option value="">Select class</option>
+                    {classOptions.map((classItem) => (
+                      <option key={classItem.id} value={classItem.id}>{classItem.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label htmlFor="fee-term" className="mb-1 block text-xs font-semibold text-slate-600">Term</label>
+                  <select
+                    id="fee-term"
+                    value={feeForm.term}
+                    onChange={(e) => setFeeForm({ ...feeForm, term: e.target.value })}
+                    className="w-full rounded-lg border border-slate-300 bg-white p-2.5 text-sm"
+                    required
+                  >
+                    <option>First Term</option>
+                    <option>Second Term</option>
+                    <option>Third Term</option>
+                  </select>
+                </div>
+                <div className="sm:col-span-2">
+                  <label htmlFor="fee-amount" className="mb-1 block text-xs font-semibold text-slate-600">Amount in naira</label>
+                  <input
+                    id="fee-amount"
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    value={feeForm.amount}
+                    onChange={(e) => setFeeForm({ ...feeForm, amount: e.target.value })}
+                    className="w-full rounded-lg border border-slate-300 p-2.5 text-sm"
+                    placeholder="Enter fee amount"
+                    required
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={savingFee || !feeForm.classId || !feeForm.amount || Number(feeForm.amount) <= 0}
+                  className="flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 sm:col-span-2"
+                >
+                  {savingFee ? 'Saving...' : 'Save Fee'}
+                </button>
+              </form>
+            </section>
+
+            <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <h3 className="mb-4 text-lg font-bold text-slate-800">Class Fees</h3>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[620px] text-left text-sm">
+                  <thead className="border-b border-slate-200 text-xs uppercase text-slate-500">
+                    <tr>
+                      <th className="px-3 py-3">Class</th>
+                      <th className="px-3 py-3">Term</th>
+                      <th className="px-3 py-3">Fee</th>
+                      <th className="px-3 py-3">Last updated</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {feeRows.length === 0 ? (
+                      <tr>
+                        <td colSpan="4" className="px-3 py-6 text-center text-slate-500">No class fees set yet.</td>
+                      </tr>
+                    ) : feeRows.map((fee) => (
+                      <tr
+                        key={fee.id}
+                        onClick={() => setFeeForm({
+                          classId: String(fee.class_id),
+                          term: fee.term,
+                          amount: String(fee.amount)
+                        })}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            setFeeForm({
+                              classId: String(fee.class_id),
+                              term: fee.term,
+                              amount: String(fee.amount)
+                            });
+                          }
+                        }}
+                        tabIndex={0}
+                        role="button"
+                        aria-label={`Edit ${fee.class_name} ${fee.term} fee`}
+                        className="cursor-pointer hover:bg-slate-50 focus:bg-slate-50 focus:outline-none"
+                      >
+                        <td className="px-3 py-3 font-medium text-slate-800">{fee.class_name}</td>
+                        <td className="px-3 py-3 text-slate-600">{fee.term}</td>
+                        <td className="px-3 py-3 font-semibold text-slate-800">₦{Number(fee.amount).toLocaleString()}</td>
+                        <td className="px-3 py-3 text-slate-500">{formatDateTime(fee.updated_at)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
           </div>
         )}
 

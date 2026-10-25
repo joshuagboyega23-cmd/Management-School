@@ -48,6 +48,9 @@ API.interceptors.response.use(
         localStorage.removeItem('token');
         localStorage.removeItem('user');
       }
+      if (error.response.status === 401 && window.location.pathname !== '/login') {
+        window.location.assign('/login');
+      }
     }
     return Promise.reject(error);
   }

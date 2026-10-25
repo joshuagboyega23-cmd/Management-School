@@ -13,6 +13,15 @@ const pool = require('./db');
 const { cloudinary, cloudinaryConfigured } = require('./cloudinary');
 require('dotenv').config();
 
+function serverError(res, error, label) {
+  console.error(`[${label || 'server'}]`, error);
+  return res.status(500).json({
+    success: false,
+    message: 'Something went wrong. Please try again.',
+    error: 'Something went wrong. Please try again.'
+  });
+}
+
 // ─── Startup Guard ────────────────────────────────────────────────────────────
 // Refuse to boot if critical environment variables are missing.
 if (!process.env.JWT_SECRET) {
@@ -75,6 +84,7 @@ const passwordResetLimiter = rateLimit({
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 10, // 10 attempts
+  skipSuccessfulRequests: true,
   standardHeaders: true,
   legacyHeaders: false,
   message: {
@@ -83,21 +93,38 @@ const loginLimiter = rateLimit({
   }
 });
 
+const loginEmailLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 8,
+  skipSuccessfulRequests: true,
+  keyGenerator: (req) => (
+    typeof req.body?.email === 'string'
+      ? req.body.email.trim().toLowerCase()
+      : req.ip
+  ),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: 'Too many failed login attempts for this account. Please try again in 15 minutes.'
+  }
+});
+
 // Security and Middleware Configuration
 app.use(helmet());
 
-// Allow multiple origins: local dev, Vercel preview URLs, and the configured production client URL
+// Allow local development and explicitly configured production client origins
 const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:3000',
-  ...(process.env.CLIENT_URL ? [process.env.CLIENT_URL] : []),
+  'https://management-school-eta.vercel.app',
+  ...(process.env.CLIENT_URL ? [process.env.CLIENT_URL.replace(/\/$/, '')] : []),
 ];
 app.use(cors({
   origin: (origin, callback) => {
     // Allow requests with no origin (mobile apps, curl, Postman)
     if (!origin) return callback(null, true);
-    // Allow any Vercel deployment URL for this project
-    if (origin.endsWith('.vercel.app') || allowedOrigins.includes(origin)) {
+    if (allowedOrigins.includes(origin)) {
       return callback(null, true);
     }
     callback(new Error(`CORS blocked: ${origin}`));
@@ -131,7 +158,10 @@ function toCsv(rows) {
   const headers = Object.keys(rows[0]);
   const escapeValue = (value) => {
     if (value === null || value === undefined) return '';
-    const stringValue = String(value).replace(/\r?\n/g, ' ');
+    const shouldPrefixFormula = typeof value === 'string'
+      && /^[=+\-@\t\r]/.test(value)
+      && !/^-?\d+(\.\d+)?$/.test(value);
+    const stringValue = String(shouldPrefixFormula ? `'${value}` : value).replace(/\r?\n/g, ' ');
     return `"${stringValue.replace(/"/g, '""')}"`;
   };
   const lines = [headers.map((header) => escapeValue(header)).join(',')];
@@ -236,7 +266,6 @@ const verifyToken = async (req, res, next) => {
   const token = authHeader.split(' ')[1];
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = decoded;
 
     // Check out dedicated client for the request transaction to apply RLS
     const client = await pool.connect();
@@ -244,9 +273,25 @@ const verifyToken = async (req, res, next) => {
 
     // Open transaction & set RLS local session variables
     await client.query('BEGIN');
+    const userResult = await client.query(
+      'SELECT id, role FROM users WHERE id = $1',
+      [decoded.id]
+    );
+    if (userResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      client.release();
+      req.db = null;
+      return res.status(401).json({
+        success: false,
+        message: 'Account no longer exists. Please log in again.'
+      });
+    }
+
+    const user = userResult.rows[0];
+    req.user = { ...decoded, role: user.role };
     await client.query(
       "SELECT set_config('app.current_user_id', $1, true), set_config('app.current_role', $2, true)",
-      [String(decoded.id), String(decoded.role)]
+      [String(decoded.id), String(user.role)]
     );
 
     let released = false;
@@ -412,6 +457,14 @@ const schemas = {
     })).min(1, 'At least one student entry is required')
   }),
 
+  classFee: z.object({
+    classId: z.number().int().positive('classId must be a positive integer'),
+    term: z.enum(['First Term', 'Second Term', 'Third Term'], {
+      error: "Term must be 'First Term', 'Second Term', or 'Third Term'"
+    }),
+    amount: z.number().positive('Amount must be a positive number')
+  }),
+
   paymentInit: z.object({
     studentId: z.number().int().positive('studentId must be a positive integer'),
     amount: z.number().positive('Amount must be a positive number'),
@@ -508,7 +561,7 @@ const createAdminAccount = async (req, res) => {
     });
   } catch (error) {
     await client.query('ROLLBACK');
-    res.status(500).json({ success: false, error: error.message });
+    return serverError(res, error, 'admin account creation');
   } finally {
     client.release();
   }
@@ -828,7 +881,7 @@ app.post('/api/auth/register/student', registrationLimiter, validate(schemas.stu
     });
   } catch (error) {
     await client.query('ROLLBACK');
-    res.status(500).json({ success: false, error: error.message });
+    return serverError(res, error, '/api/auth/register/student');
   } finally {
     client.release();
   }
@@ -949,7 +1002,7 @@ app.post('/api/auth/register/parent', registrationLimiter, validate(schemas.pare
     });
   } catch (error) {
     await client.query('ROLLBACK');
-    res.status(500).json({ success: false, error: error.message });
+    return serverError(res, error, '/api/auth/register/parent');
   } finally {
     client.release();
   }
@@ -1040,13 +1093,13 @@ app.post('/api/auth/register/teacher', registrationLimiter, validate(schemas.tea
     });
   } catch (error) {
     await client.query('ROLLBACK');
-    res.status(500).json({ success: false, error: error.message });
+    return serverError(res, error, '/api/auth/register/teacher');
   } finally {
     client.release();
   }
 });
 
-app.post('/api/auth/login', loginLimiter, validate(schemas.login), async (req, res) => {
+app.post('/api/auth/login', loginLimiter, loginEmailLimiter, validate(schemas.login), async (req, res) => {
   const { email, password, portal, admissionNumber } = req.body;
 
   if (!email || !password || !portal) {
@@ -1131,7 +1184,7 @@ app.post('/api/auth/login', loginLimiter, validate(schemas.login), async (req, r
       }
     });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    return serverError(res, error, '/api/auth/login');
   }
 });
 
@@ -1311,7 +1364,7 @@ app.get('/api/students', verifyToken, requireRole('ADMIN', 'SUPERADMIN', 'TEACHE
     );
     res.json({ success: true, data: students.rows });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    return serverError(res, error, '/api/students');
   }
 });
 
@@ -1336,7 +1389,7 @@ app.get('/api/teachers', verifyToken, requireRole('ADMIN', 'SUPERADMIN'), async 
     );
     res.json({ success: true, data: teachers.rows });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    return serverError(res, error, '/api/teachers');
   }
 });
 
@@ -1460,7 +1513,65 @@ app.get('/api/parents', verifyToken, requireRole('ADMIN', 'SUPERADMIN'), async (
     );
     res.json({ success: true, data: parents.rows });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    return serverError(res, error, '/api/parents');
+  }
+});
+
+app.get('/api/fees', verifyToken, requireRole('ADMIN', 'SUPERADMIN'), async (req, res) => {
+  try {
+    const fees = await req.db.query(
+      `SELECT cf.id, cf.class_id, c.name AS class_name, cf.term, cf.amount, cf.updated_at
+       FROM class_fees cf
+       JOIN classes c ON c.id = cf.class_id
+       ORDER BY c.name, cf.term`
+    );
+    res.json({ success: true, data: fees.rows });
+  } catch (error) {
+    return serverError(res, error, '/api/fees');
+  }
+});
+
+app.put('/api/fees', verifyToken, requireRole('ADMIN', 'SUPERADMIN'), validate(schemas.classFee), async (req, res) => {
+  try {
+    const { classId, term, amount } = req.body;
+    const existingFee = await req.db.query(
+      `SELECT c.name AS class_name, cf.amount AS old_amount
+       FROM classes c
+       LEFT JOIN class_fees cf ON cf.class_id = c.id AND cf.term = $2
+       WHERE c.id = $1`,
+      [classId, term]
+    );
+    if (existingFee.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Class not found.' });
+    }
+
+    const savedFee = await req.db.query(
+      `INSERT INTO class_fees (class_id, term, amount, updated_by)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (class_id, term)
+       DO UPDATE SET amount = EXCLUDED.amount, updated_by = EXCLUDED.updated_by, updated_at = NOW()
+       RETURNING id, class_id, term, amount, updated_at`,
+      [classId, term, amount, req.user.id]
+    );
+    const previousAmount = existingFee.rows[0].old_amount;
+    const previousText = previousAmount === null
+      ? ''
+      : ` (previously ₦${previousAmount})`;
+    await logActivity({
+      db: req.db,
+      actorId: req.user.id,
+      actorName: req.user.email || 'Administrator',
+      actorRole: req.user.role,
+      action: 'Fees',
+      targetDescription: `Set fee: ${existingFee.rows[0].class_name} — ${term} — ₦${savedFee.rows[0].amount}${previousText}`
+    });
+
+    res.json({
+      success: true,
+      data: { ...savedFee.rows[0], class_name: existingFee.rows[0].class_name }
+    });
+  } catch (error) {
+    return serverError(res, error, '/api/fees');
   }
 });
 
@@ -1596,7 +1707,7 @@ app.get('/api/materials', verifyToken, async (req, res) => {
     const result = await req.db.query(query, params);
     res.json({ success: true, data: result.rows });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    return serverError(res, error, '/api/materials');
   }
 });
 
@@ -1651,7 +1762,7 @@ app.get('/api/admin/users', verifyToken, requireRole('ADMIN', 'SUPERADMIN'), asy
     );
     res.json({ success: true, data: result.rows });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    return serverError(res, error, '/api/admin/users');
   }
 });
 
@@ -1727,7 +1838,7 @@ app.get('/api/admin/export/students', verifyToken, requireRole('ADMIN', 'SUPERAD
     res.setHeader('Content-Disposition', 'attachment; filename="students-export.csv"');
     res.send(csv);
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    return serverError(res, error, '/api/admin/export/students');
   }
 });
 
@@ -1759,7 +1870,7 @@ app.get('/api/admin/export/grades', verifyToken, requireRole('ADMIN', 'SUPERADMI
     res.setHeader('Content-Disposition', 'attachment; filename="grades-export.csv"');
     res.send(csv);
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    return serverError(res, error, '/api/admin/export/grades');
   }
 });
 
@@ -1790,7 +1901,7 @@ app.get('/api/admin/export/payments', verifyToken, requireRole('ADMIN', 'SUPERAD
     res.setHeader('Content-Disposition', 'attachment; filename="payments-export.csv"');
     res.send(csv);
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    return serverError(res, error, '/api/admin/export/payments');
   }
 });
 
@@ -1818,7 +1929,7 @@ app.get('/api/admin/activity-log', verifyToken, requireRole('ADMIN', 'SUPERADMIN
       }
     });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    return serverError(res, error, '/api/admin/activity-log');
   }
 });
 
@@ -1879,7 +1990,7 @@ app.post('/api/admin/promote-class', verifyToken, requireRole('ADMIN', 'SUPERADM
       movedCount
     });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    return serverError(res, error, '/api/admin/promote-class');
   }
 });
 
@@ -1948,7 +2059,7 @@ app.post('/api/students', verifyToken, requireRole('ADMIN', 'SUPERADMIN'), async
     });
   } catch (error) {
     await client.query('ROLLBACK');
-    res.status(500).json({ success: false, error: error.message });
+    return serverError(res, error, '/api/students');
   } finally {
     client.release();
   }
@@ -1957,8 +2068,12 @@ app.post('/api/students', verifyToken, requireRole('ADMIN', 'SUPERADMIN'), async
 app.post('/api/report-cards', verifyToken, requireRole('TEACHER', 'ADMIN', 'SUPERADMIN'), validate(schemas.gradeSubmit), async (req, res) => {
   const { studentId, term, subject, caScore, examScore } = req.body;
 
-  const ca = Number(caScore) || 0;
-  const exam = Number(examScore) || 0;
+  const ca = Number(caScore);
+  const exam = Number(examScore);
+
+  if (!Number.isFinite(ca) || ca < 0 || !Number.isFinite(exam) || exam < 0) {
+    return res.status(400).json({ success: false, message: 'Scores must be valid non-negative numbers.' });
+  }
 
   if (ca > 40 || exam > 60) {
     return res.status(400).json({
@@ -1969,7 +2084,10 @@ app.post('/api/report-cards', verifyToken, requireRole('TEACHER', 'ADMIN', 'SUPE
 
   try {
     const studentCheck = await (req.db || pool).query(
-      'SELECT id, full_name FROM students WHERE id = $1 AND (is_active IS NOT FALSE)',
+      `SELECT s.id, s.full_name, COALESCE(c.name, 'No class') AS class_name
+       FROM students s
+       LEFT JOIN classes c ON c.id = s.class_id
+       WHERE s.id = $1 AND (s.is_active IS NOT FALSE)`,
       [studentId]
     );
     if (studentCheck.rows.length === 0) {
@@ -1996,7 +2114,7 @@ app.post('/api/report-cards', verifyToken, requireRole('TEACHER', 'ADMIN', 'SUPE
       [studentId, term, subject, ca, exam, totalScore, grade]
     );
 
-    const targetDescription = `${subject} — ${term} — ${studentCheck.rows[0].full_name}`;
+    const targetDescription = `Created: ${subject} — ${term} — ${studentCheck.rows[0].full_name} (${studentCheck.rows[0].class_name}) | CA ${ca}, Exam ${exam}`;
     await logActivity({
       db: req.db || pool,
       actorId: req.user.id,
@@ -2012,7 +2130,7 @@ app.post('/api/report-cards', verifyToken, requireRole('TEACHER', 'ADMIN', 'SUPE
       reportCard: { ...reportCard.rows[0], remark }
     });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    return serverError(res, error, '/api/report-cards');
   }
 });
 
@@ -2020,10 +2138,14 @@ app.post('/api/report-cards/bulk', verifyToken, requireRole('TEACHER', 'ADMIN', 
   try {
     const { classId, subject, term, entries } = req.body;
     const students = await (req.db || pool).query(
-      'SELECT id, full_name FROM students WHERE class_id = $1 AND is_active IS NOT FALSE ORDER BY full_name ASC',
+      `SELECT s.id, s.full_name, COALESCE(c.name, 'No class') AS class_name
+       FROM students s
+       LEFT JOIN classes c ON c.id = s.class_id
+       WHERE s.class_id = $1 AND s.is_active IS NOT FALSE
+       ORDER BY s.full_name ASC`,
       [classId]
     );
-    const studentMap = new Map(students.rows.map((student) => [String(student.id), student.full_name]));
+    const studentMap = new Map(students.rows.map((student) => [String(student.id), student]));
     const saved = [];
     const skipped = [];
 
@@ -2040,7 +2162,7 @@ app.post('/api/report-cards/bulk', verifyToken, requireRole('TEACHER', 'ADMIN', 
         [studentId, term, subject]
       );
       if (existing.rows.length > 0) {
-        skipped.push({ studentId, full_name: studentMap.get(String(studentId)), reason: 'Already recorded' });
+        skipped.push({ studentId, full_name: studentMap.get(String(studentId)).full_name, reason: 'Already recorded' });
         continue;
       }
       const totalScore = ca + exam;
@@ -2051,7 +2173,8 @@ app.post('/api/report-cards/bulk', verifyToken, requireRole('TEACHER', 'ADMIN', 
          RETURNING *`,
         [studentId, term, subject, ca, exam, totalScore, grade]
       );
-      saved.push({ ...reportCard.rows[0], full_name: studentMap.get(String(studentId)) });
+      const student = studentMap.get(String(studentId));
+      saved.push({ ...reportCard.rows[0], full_name: student.full_name, class_name: student.class_name });
     }
 
     if (saved.length > 0) {
@@ -2061,7 +2184,9 @@ app.post('/api/report-cards/bulk', verifyToken, requireRole('TEACHER', 'ADMIN', 
         actorName: req.user.email || 'Teacher',
         actorRole: req.user.role,
         action: 'Grades',
-        targetDescription: `${subject} — ${term} — ${saved.length} saved entries`
+        targetDescription: saved.map((row) => (
+          `Created: ${subject} — ${term} — ${row.full_name} (${row.class_name}) | CA ${row.ca_score}, Exam ${row.exam_score}`
+        )).join('; ')
       });
     }
 
@@ -2075,7 +2200,7 @@ app.post('/api/report-cards/bulk', verifyToken, requireRole('TEACHER', 'ADMIN', 
       data: { saved, skipped }
     });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    return serverError(res, error, '/api/report-cards/bulk');
   }
 });
 
@@ -2088,9 +2213,19 @@ app.patch('/api/report-cards/:id', verifyToken, requireRole('TEACHER', 'ADMIN', 
     }
 
     const existing = record.rows[0];
-    const student = await (req.db || pool).query('SELECT full_name FROM students WHERE id = $1', [existing.student_id]);
+    const student = await (req.db || pool).query(
+      `SELECT s.full_name, COALESCE(c.name, 'No class') AS class_name
+       FROM students s
+       LEFT JOIN classes c ON c.id = s.class_id
+       WHERE s.id = $1`,
+      [existing.student_id]
+    );
     const nextCa = Number(req.body.caScore ?? existing.ca_score);
     const nextExam = Number(req.body.examScore ?? existing.exam_score);
+
+    if (!Number.isFinite(nextCa) || nextCa < 0 || !Number.isFinite(nextExam) || nextExam < 0) {
+      return res.status(400).json({ success: false, message: 'Scores must be valid non-negative numbers.' });
+    }
 
     if (nextCa > 40 || nextExam > 60) {
       return res.status(400).json({
@@ -2116,12 +2251,12 @@ app.patch('/api/report-cards/:id', verifyToken, requireRole('TEACHER', 'ADMIN', 
       actorName: req.user.email || 'Teacher',
       actorRole: req.user.role,
       action: 'Grades',
-      targetDescription: `${existing.subject} — ${existing.term} — ${student.rows[0]?.full_name || existing.student_id}`
+      targetDescription: `Edited: ${existing.subject} — ${existing.term} — ${student.rows[0]?.full_name || existing.student_id} (${student.rows[0]?.class_name || 'No class'}) | CA ${existing.ca_score}→${nextCa}, Exam ${existing.exam_score}→${nextExam}`
     });
 
     res.json({ success: true, message: 'Grade updated successfully.', data: updated.rows[0] });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    return serverError(res, error, '/api/report-cards/:id');
   }
 });
 
@@ -2133,7 +2268,13 @@ app.delete('/api/report-cards/:id', verifyToken, requireRole('TEACHER', 'ADMIN',
       return res.status(404).json({ success: false, message: 'Report card entry not found.' });
     }
 
-    const student = await (req.db || pool).query('SELECT full_name FROM students WHERE id = $1', [existing.rows[0].student_id]);
+    const student = await (req.db || pool).query(
+      `SELECT s.full_name, COALESCE(c.name, 'No class') AS class_name
+       FROM students s
+       LEFT JOIN classes c ON c.id = s.class_id
+       WHERE s.id = $1`,
+      [existing.rows[0].student_id]
+    );
     await (req.db || pool).query('DELETE FROM report_cards WHERE id = $1', [Number(id)]);
 
     await logActivity({
@@ -2142,12 +2283,12 @@ app.delete('/api/report-cards/:id', verifyToken, requireRole('TEACHER', 'ADMIN',
       actorName: req.user.email || 'Teacher',
       actorRole: req.user.role,
       action: 'Grades',
-      targetDescription: `${existing.rows[0].subject} — ${existing.rows[0].term} — ${student.rows[0]?.full_name || existing.rows[0].student_id}`
+      targetDescription: `Deleted: ${existing.rows[0].subject} — ${existing.rows[0].term} — ${student.rows[0]?.full_name || existing.rows[0].student_id} (${student.rows[0]?.class_name || 'No class'}) | CA ${existing.rows[0].ca_score}, Exam ${existing.rows[0].exam_score}`
     });
 
     res.json({ success: true, message: 'Grade removed successfully.' });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    return serverError(res, error, '/api/report-cards/:id');
   }
 });
 
@@ -2195,7 +2336,7 @@ app.get('/api/report-cards/student/:studentId', verifyToken, async (req, res) =>
 
     res.json({ success: true, data: formattedData });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    return serverError(res, error, '/api/report-cards/student/:studentId');
   }
 });
 
@@ -2245,7 +2386,7 @@ app.get('/api/student/me', verifyToken, requireRole('STUDENT'), async (req, res)
       }
     });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    return serverError(res, error, '/api/student/me');
   }
 });
 
@@ -2319,13 +2460,37 @@ app.get('/api/parent/children', verifyToken, requireRole('PARENT'), async (req, 
       data: childrenWithDetails
     });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    return serverError(res, error, '/api/parent/children');
   }
 });
 
 // =============================================================
 // 3. PAYSTACK PAYMENTS MODULE
 // =============================================================
+
+async function getFeeSummary(db, studentId, term) {
+  const feeResult = await db.query(
+    `SELECT cf.amount
+     FROM class_fees cf
+     JOIN students s ON s.class_id = cf.class_id
+     WHERE s.id = $1 AND cf.term = $2`,
+    [studentId, term]
+  );
+  const paidResult = await db.query(
+    `SELECT COALESCE(SUM(amount), 0) AS paid
+     FROM fee_payments
+     WHERE student_id = $1 AND term = $2 AND status = 'SUCCESS'`,
+    [studentId, term]
+  );
+  const fee = feeResult.rows.length > 0 ? Number(feeResult.rows[0].amount) : null;
+  const paid = Number(paidResult.rows[0].paid);
+
+  return {
+    fee,
+    paid,
+    outstanding: fee === null ? null : Math.max(0, fee - paid)
+  };
+}
 
 // GET single student payment history (with PARENT link check)
 app.get('/api/payments/student/:studentId', verifyToken, async (req, res) => {
@@ -2366,7 +2531,46 @@ app.get('/api/payments/student/:studentId', verifyToken, async (req, res) => {
 
     res.json({ success: true, data: payments.rows });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    return serverError(res, error, '/api/payments/student/:studentId');
+  }
+});
+
+app.get('/api/payments/balance/:studentId', verifyToken, async (req, res) => {
+  const { studentId } = req.params;
+
+  try {
+    if (req.user.role === 'PARENT') {
+      const linkCheck = await (req.db || pool).query(
+        'SELECT 1 FROM parent_student_links WHERE parent_user_id = $1 AND student_id = $2',
+        [req.user.id, studentId]
+      );
+      if (linkCheck.rows.length === 0) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied: You are not authorized to view payment records for this student.'
+        });
+      }
+    } else if (req.user.role === 'STUDENT') {
+      const studentCheck = await (req.db || pool).query(
+        'SELECT 1 FROM students WHERE id = $1 AND user_id = $2',
+        [studentId, req.user.id]
+      );
+      if (studentCheck.rows.length === 0) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied: You can only view your own payment records.'
+        });
+      }
+    }
+
+    const terms = ['First Term', 'Second Term', 'Third Term'];
+    const data = await Promise.all(terms.map(async (term) => ({
+      term,
+      ...await getFeeSummary(req.db || pool, studentId, term)
+    })));
+    res.json({ success: true, data });
+  } catch (error) {
+    return serverError(res, error, '/api/payments/balance/:studentId');
   }
 });
 
@@ -2393,6 +2597,17 @@ app.post('/api/payments/initialize', verifyToken, validate(schemas.paymentInit),
           message: 'Access denied: You can only initialize payments for your linked children.'
         });
       }
+    }
+
+    const feeSummary = await getFeeSummary(req.db || pool, studentId, term);
+    if (feeSummary.fee !== null && feeSummary.outstanding <= 0) {
+      return res.status(400).json({ success: false, message: 'Fees for this term are already fully paid.' });
+    }
+    if (feeSummary.fee !== null && amount > feeSummary.outstanding) {
+      return res.status(400).json({
+        success: false,
+        message: `Amount exceeds the outstanding balance of ₦${feeSummary.outstanding.toLocaleString()}.`
+      });
     }
 
     const reference = `FEE-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
@@ -2427,7 +2642,7 @@ app.post('/api/payments/initialize', verifyToken, validate(schemas.paymentInit),
     });
   } catch (err) {
     console.error('Paystack transaction initialization failed:', err.response?.data || err.message);
-    res.status(500).json({ success: false, message: err.response?.data?.message || err.response?.data?.error || err.message });
+    return serverError(res, err, '/api/payments/initialize');
   }
 });
 
@@ -2446,10 +2661,26 @@ app.get('/api/payments/verify/:reference', async (req, res) => {
     const paystackStatus = paystackData?.status;
 
     if (paystackStatus === 'success') {
-      const result = await pool.query(
-        `UPDATE fee_payments SET status = 'SUCCESS' WHERE reference = $1 RETURNING *`,
+      let result = { rows: [] };
+      const storedPayment = await pool.query(
+        'SELECT amount FROM fee_payments WHERE reference = $1',
         [reference]
       );
+      if (storedPayment.rows.length > 0) {
+        const storedAmount = storedPayment.rows[0].amount;
+        const reportedAmount = paystackData.amount;
+        if (Math.round(Number(storedAmount) * 100) !== Number(reportedAmount)) {
+          console.error('Payment amount mismatch', { reference, storedAmount, reportedAmount });
+          return res.status(400).json({
+            success: false,
+            message: 'Payment amount mismatch. Please contact the school office.'
+          });
+        }
+        result = await pool.query(
+          `UPDATE fee_payments SET status = 'SUCCESS' WHERE reference = $1 RETURNING *`,
+          [reference]
+        );
+      }
       return res.json({ 
         success: true, 
         message: 'Payment confirmed successfully.',
@@ -2459,7 +2690,7 @@ app.get('/api/payments/verify/:reference', async (req, res) => {
       });
     } else if (paystackStatus === 'failed' || paystackStatus === 'abandoned') {
       const result = await pool.query(
-        `UPDATE fee_payments SET status = 'FAILED' WHERE reference = $1 RETURNING *`,
+        `UPDATE fee_payments SET status = 'FAILED' WHERE reference = $1 AND status <> 'SUCCESS' RETURNING *`,
         [reference]
       );
       return res.status(400).json({ 
@@ -2471,7 +2702,7 @@ app.get('/api/payments/verify/:reference', async (req, res) => {
 
     res.status(400).json({ success: false, message: 'Payment verification failed or pending.' });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.response?.data?.message || err.message });
+    return serverError(res, err, '/api/payments/verify/:reference');
   }
 });
 
@@ -2483,20 +2714,36 @@ app.post('/api/payments/webhook', async (req, res) => {
       .createHmac('sha512', process.env.PAYSTACK_SECRET_KEY)
       .update(raw)
       .digest('hex');
+    const receivedSignature = req.headers['x-paystack-signature'];
+    const expectedSignatureBuffer = Buffer.from(hash);
+    const receivedSignatureBuffer = Buffer.from(typeof receivedSignature === 'string' ? receivedSignature : '');
 
-    if (hash === req.headers['x-paystack-signature']) {
+    if (expectedSignatureBuffer.length === receivedSignatureBuffer.length
+      && crypto.timingSafeEqual(expectedSignatureBuffer, receivedSignatureBuffer)) {
       const event = req.body;
       const reference = event.data?.reference;
 
       if (reference) {
         if (event.event === 'charge.success') {
-          await pool.query(
-            `UPDATE fee_payments SET status = 'SUCCESS' WHERE reference = $1`,
+          const storedPayment = await pool.query(
+            'SELECT amount FROM fee_payments WHERE reference = $1',
             [reference]
           );
+          if (storedPayment.rows.length > 0) {
+            const storedAmount = storedPayment.rows[0].amount;
+            const reportedAmount = event.data.amount;
+            if (Math.round(Number(storedAmount) * 100) !== Number(reportedAmount)) {
+              console.error('Payment amount mismatch', { reference, storedAmount, reportedAmount });
+            } else {
+              await pool.query(
+                `UPDATE fee_payments SET status = 'SUCCESS' WHERE reference = $1`,
+                [reference]
+              );
+            }
+          }
         } else if (event.event === 'charge.failed' || event.event === 'charge.abandoned') {
           await pool.query(
-            `UPDATE fee_payments SET status = 'FAILED' WHERE reference = $1`,
+            `UPDATE fee_payments SET status = 'FAILED' WHERE reference = $1 AND status <> 'SUCCESS'`,
             [reference]
           );
         }
@@ -2505,7 +2752,8 @@ app.post('/api/payments/webhook', async (req, res) => {
     }
     return res.status(400).send('Invalid Signature');
   } catch (error) {
-    res.status(500).send(error.message);
+    console.error('[/api/payments/webhook]', error);
+    return res.sendStatus(500);
   }
 });
 
@@ -2536,7 +2784,7 @@ app.get('/api/payments/history', verifyToken, async (req, res) => {
     );
     res.json({ success: true, data: payments.rows });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    return serverError(res, error, '/api/payments/history');
   }
 });
 
@@ -2599,7 +2847,7 @@ app.post('/api/announcements', verifyToken, requireRole('ADMIN', 'SUPERADMIN'), 
 
     res.status(201).json({ success: true, data: result.rows[0] });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    return serverError(res, error, '/api/announcements');
   }
 });
 
@@ -2629,7 +2877,7 @@ app.get('/api/announcements', verifyToken, async (req, res) => {
 
     res.json({ success: true, data: announcements.rows });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    return serverError(res, error, '/api/announcements');
   }
 });
 
@@ -2797,7 +3045,7 @@ app.post('/api/conversations', verifyToken, async (req, res) => {
       threadsCreated: createdThreads.length
     });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    return serverError(res, error, '/api/conversations');
   }
 });
 
@@ -2834,7 +3082,7 @@ app.get('/api/conversations', verifyToken, async (req, res) => {
     const result = await (req.db || pool).query(query, params);
     res.json({ success: true, data: result.rows });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    return serverError(res, error, '/api/conversations');
   }
 });
 
@@ -2878,7 +3126,7 @@ app.get('/api/conversations/:id/messages', verifyToken, async (req, res) => {
 
     res.json({ success: true, data: messages.rows });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    return serverError(res, error, '/api/conversations/:id/messages');
   }
 });
 
@@ -2926,7 +3174,7 @@ app.post('/api/conversations/:id/messages', verifyToken, async (req, res) => {
 
     res.status(201).json({ success: true, data: message.rows[0] });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    return serverError(res, error, '/api/conversations/:id/messages');
   }
 });
 
@@ -2955,7 +3203,7 @@ app.post('/api/payroll/process', verifyToken, requireRole('ADMIN', 'SUPERADMIN')
       data: result.rows[0]
     });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    return serverError(res, err, '/api/payroll/process');
   }
 });
 
@@ -2969,7 +3217,7 @@ app.get('/api/payroll/history', verifyToken, requireRole('ADMIN', 'SUPERADMIN'),
     );
     res.json({ success: true, data: payroll.rows });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    return serverError(res, error, '/api/payroll/history');
   }
 });
 

@@ -233,9 +233,20 @@ export function downloadReceiptPDF(details) {
     ? formatDateTime(details.created_at)
     : formatDateTime(new Date());
 
+  const hasBalanceDetails = details.fee !== undefined
+    && details.totalPaid !== undefined
+    && details.outstanding !== undefined;
+  const amountRows = hasBalanceDetails
+    ? [
+        ['Term fee', `NGN ${Number(details.fee).toLocaleString()}`],
+        ['Amount paid (this payment)', `NGN ${Number(details.amount || 0).toLocaleString()}`],
+        ['Total paid for term', `NGN ${Number(details.totalPaid).toLocaleString()}`],
+        [`Outstanding balance (as of ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })})`, `NGN ${Number(details.outstanding).toLocaleString()}`],
+      ]
+    : [['Amount Paid', `NGN ${Number(details.amount || 0).toLocaleString()}`]];
   const rows = [
     ['Reference Code', details.reference || '—'],
-    ['Amount Paid', `NGN ${Number(details.amount || 0).toLocaleString()}`],
+    ...amountRows,
     ['Academic Term', details.term || details.payment?.term || '—'],
     ['Payment Status', 'CONFIRMED / PAID'],
     ['Date Processed', formattedDate],

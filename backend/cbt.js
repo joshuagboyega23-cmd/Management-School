@@ -8,6 +8,15 @@ const path = require('path');
 const pool = require('./db');
 const { cloudinary, cloudinaryConfigured } = require('./cloudinary');
 
+function serverError(res, error, label) {
+  console.error(`[${label || 'server'}]`, error);
+  return res.status(500).json({
+    success: false,
+    message: 'Something went wrong. Please try again.',
+    error: 'Something went wrong. Please try again.'
+  });
+}
+
 // =============================================================
 // AUTH & PERMISSION MIDDLEWARES
 // =============================================================
@@ -69,7 +78,6 @@ const verifyToken = async (req, res, next) => {
 
     next();
   } catch (error) {
-    console.error('verifyToken error in cbt.js:', error);
     if (req.db) {
       try {
         await req.db.query('ROLLBACK');
@@ -79,7 +87,7 @@ const verifyToken = async (req, res, next) => {
     if (!req.user) {
       return res.status(403).json({ success: false, message: 'Invalid or expired token.' });
     }
-    return res.status(500).json({ success: false, message: 'Database service temporarily unavailable. Please retry.' });
+    return serverError(res, error, 'CBT authentication');
   }
 };
 

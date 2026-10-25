@@ -42,7 +42,19 @@ export default function PaymentVerify() {
         const res = await API.get(`/payments/verify/${encodeURIComponent(reference)}`);
         if (res.data.success) {
           setStatus('success');
-          setPaymentDetails(res.data);
+          let receiptBalance = null;
+          const payment = res.data.payment;
+          if (payment?.student_id && payment.term) {
+            try {
+              const balanceRes = await API.get(`/payments/balance/${payment.student_id}`);
+              const termName = String(payment.term).replace(/\s+\d{4}$/, '');
+              receiptBalance = (Array.isArray(balanceRes.data?.data) ? balanceRes.data.data : [])
+                .find((item) => item.term === termName) || null;
+            } catch {
+              receiptBalance = null;
+            }
+          }
+          setPaymentDetails({ ...res.data, receiptBalance });
         } else {
           setStatus('failed');
           setErrorMessage(res.data.message || 'Payment could not be verified.');
@@ -136,7 +148,16 @@ export default function PaymentVerify() {
                 <ArrowLeft className="h-4 w-4" /> Return to Dashboard
               </button>
               <button
-                onClick={() => downloadReceiptPDF({ ...paymentDetails, reference, paidAt: paymentDetails?.paidAt || paymentDetails?.payment?.created_at || paymentDetails?.created_at || new Date().toISOString() })}
+                onClick={() => downloadReceiptPDF({
+                  ...paymentDetails,
+                  reference,
+                  paidAt: paymentDetails?.paidAt || paymentDetails?.payment?.created_at || paymentDetails?.created_at || new Date().toISOString(),
+                  ...(paymentDetails?.receiptBalance && paymentDetails.receiptBalance.fee !== null ? {
+                    fee: Number(paymentDetails.receiptBalance.fee),
+                    totalPaid: Number(paymentDetails.receiptBalance.paid),
+                    outstanding: Number(paymentDetails.receiptBalance.outstanding)
+                  } : {})
+                })}
                 className="w-full py-2.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm font-semibold transition flex items-center justify-center gap-2"
               >
                 <Download className="h-4 w-4" /> Download Receipt PDF
@@ -191,4 +212,3 @@ export default function PaymentVerify() {
     </div>
   );
 }
-

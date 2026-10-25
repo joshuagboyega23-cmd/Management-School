@@ -4,16 +4,25 @@ require('dotenv').config();
 
 async function createAdmin() {
   const args = process.argv.slice(2);
-  const email = args[0] || 'admin@pinnacleheights.edu.ng';
-  const password = args[1] || 'Admin123!';
+  const email = args[0];
+  const password = args[1];
   const fullName = args[2] || 'System Administrator';
   const role = args[3] || 'ADMIN';
+
+  if (!email || !password) {
+    console.error('Usage: node createAdmin.js <email> <password> "<Full Name>" [ROLE]');
+    process.exit(1);
+  }
+  if (password.length < 10) {
+    console.error('Password must be at least 10 characters long.');
+    process.exit(1);
+  }
 
   console.log(`\n========================================`);
   console.log(`Creating Admin Account...`);
   console.log(`Full Name: ${fullName}`);
   console.log(`Email:     ${email}`);
-  console.log(`Password:  ${password}`);
+  console.log(`Password: (hidden)`);
   console.log(`Role:      ${role}`);
   console.log(`========================================\n`);
 
@@ -47,4 +56,3 @@ async function createAdmin() {
 }
 
 createAdmin();
-

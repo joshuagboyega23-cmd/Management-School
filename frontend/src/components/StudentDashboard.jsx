@@ -14,6 +14,7 @@ export default function StudentDashboard() {
   const [verifyingRef, setVerifyingRef] = useState('');
   const [notification, setNotification] = useState({ type: '', text: '' });
   const [feeHistory, setFeeHistory] = useState([]);
+  const [feeBalances, setFeeBalances] = useState([]);
   const [announcements, setAnnouncements] = useState([]);
   const [materials, setMaterials] = useState([]);
   const student = data?.student;
@@ -45,6 +46,7 @@ export default function StudentDashboard() {
       const refreshRes = await API.get('/student/me');
       if (refreshRes.data.success) {
         setData(refreshRes.data.data);
+        fetchFeeBalances(refreshRes.data.data.student?.id);
       }
       const feeRes = await API.get('/payments/history');
       if (feeRes.data.success) {
@@ -71,6 +73,16 @@ export default function StudentDashboard() {
       setFeeHistory(studentPayments);
     } catch (err) {
       setFeeHistory([]);
+    }
+  };
+
+  const fetchFeeBalances = async (studentId) => {
+    if (!studentId) return;
+    try {
+      const res = await API.get(`/payments/balance/${studentId}`);
+      setFeeBalances(Array.isArray(res.data?.data) ? res.data.data : []);
+    } catch {
+      setFeeBalances([]);
     }
   };
 
@@ -101,6 +113,7 @@ export default function StudentDashboard() {
   useEffect(() => {
     if (student?.id) {
       fetchFeeStatus();
+      fetchFeeBalances(student.id);
     }
   }, [student?.id]);
 
@@ -411,6 +424,21 @@ export default function StudentDashboard() {
                 </h3>
               </div>
 
+              {feeBalances.length > 0 && (
+                <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  {feeBalances.map((balance) => (
+                    <div key={balance.term} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                      <h4 className="mb-3 text-sm font-bold text-slate-800">{balance.term}</h4>
+                      <dl className="space-y-2 text-xs">
+                        <div className="flex justify-between gap-2"><dt className="text-slate-500">Fee</dt><dd className="font-semibold text-slate-800">{balance.fee === null ? 'Fee not set' : `₦${Number(balance.fee).toLocaleString()}`}</dd></div>
+                        <div className="flex justify-between gap-2"><dt className="text-slate-500">Paid</dt><dd className="font-semibold text-slate-800">₦{Number(balance.paid).toLocaleString()}</dd></div>
+                        <div className="flex justify-between gap-2"><dt className="text-slate-500">Outstanding</dt><dd className="font-semibold text-slate-800">{balance.outstanding === null ? '—' : `₦${Number(balance.outstanding).toLocaleString()}`}</dd></div>
+                      </dl>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               {feeHistory.length === 0 ? (
                 <p className="text-sm text-slate-500 py-6 text-center">No fee transaction history has been recorded yet.</p>
               ) : (
@@ -444,7 +472,21 @@ export default function StudentDashboard() {
                         <p className="text-[11px] font-semibold text-slate-500 xl:hidden">Receipt</p>
                         {p.status === 'SUCCESS' ? (
                           <button
-                            onClick={() => downloadReceiptPDF({ ...p, reference: p.reference, amount: p.amount, term: p.term, paidAt: p.created_at })}
+                            onClick={() => {
+                              const balance = feeBalances.find((item) => String(p.term || 'First Term').startsWith(item.term));
+                              downloadReceiptPDF({
+                                ...p,
+                                reference: p.reference,
+                                amount: p.amount,
+                                term: p.term,
+                                paidAt: p.created_at,
+                                ...(balance && balance.fee !== null ? {
+                                  fee: Number(balance.fee),
+                                  totalPaid: Number(balance.paid),
+                                  outstanding: Number(balance.outstanding)
+                                } : {})
+                              });
+                            }}
                             className="text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-2.5 py-1.5 rounded-lg transition"
                           >
                             Download Receipt

@@ -14,7 +14,9 @@ const pool = new Pool({
   // preventing "Authentication timed out" (08P01) errors.
   idleTimeoutMillis: 10000,
   connectionTimeoutMillis: 30000,
-  max: 10,
+  max: Number(process.env.DB_POOL_MAX) || 20,
+  statement_timeout: 30000,
+  idle_in_transaction_session_timeout: 120000,
   keepAlive: true
 });
 
