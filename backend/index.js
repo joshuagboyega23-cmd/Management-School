@@ -814,6 +814,22 @@ app.post('/api/auth/register/student', registrationLimiter, validate(schemas.stu
   try {
     await client.query('BEGIN');
 
+    const failedAttempts = await client.query(
+      `SELECT COUNT(*) FROM registration_attempts
+       WHERE LOWER(admission_number_entered) = LOWER($1)
+         AND attempted_role = $2
+         AND matched = FALSE
+         AND created_at > NOW() - INTERVAL '24 hours'`,
+      [admissionNumber.trim(), 'STUDENT']
+    );
+    if (Number(failedAttempts.rows[0].count) >= 5) {
+      await client.query('ROLLBACK');
+      return res.status(429).json({
+        success: false,
+        message: 'Too many failed attempts for this ID. Please contact the school administration.'
+      });
+    }
+
     // Look up unclaimed student matching admission_number and date_of_birth
     const studentRes = await client.query(
       `SELECT * FROM students 
@@ -903,6 +919,22 @@ app.post('/api/auth/register/parent', registrationLimiter, validate(schemas.pare
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+
+    const failedAttempts = await client.query(
+      `SELECT COUNT(*) FROM registration_attempts
+       WHERE LOWER(admission_number_entered) = LOWER($1)
+         AND attempted_role = $2
+         AND matched = FALSE
+         AND created_at > NOW() - INTERVAL '24 hours'`,
+      [admissionNumber.trim(), 'PARENT']
+    );
+    if (Number(failedAttempts.rows[0].count) >= 5) {
+      await client.query('ROLLBACK');
+      return res.status(429).json({
+        success: false,
+        message: 'Too many failed attempts for this ID. Please contact the school administration.'
+      });
+    }
 
     // Verify student exists with admission_number and date_of_birth
     const studentRes = await client.query(
@@ -1024,6 +1056,22 @@ app.post('/api/auth/register/teacher', registrationLimiter, validate(schemas.tea
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+
+    const failedAttempts = await client.query(
+      `SELECT COUNT(*) FROM registration_attempts
+       WHERE LOWER(admission_number_entered) = LOWER($1)
+         AND attempted_role = $2
+         AND matched = FALSE
+         AND created_at > NOW() - INTERVAL '24 hours'`,
+      [staffId.trim(), 'TEACHER']
+    );
+    if (Number(failedAttempts.rows[0].count) >= 5) {
+      await client.query('ROLLBACK');
+      return res.status(429).json({
+        success: false,
+        message: 'Too many failed attempts for this ID. Please contact the school administration.'
+      });
+    }
 
     // Look up unclaimed teacher matching staff_id, date_of_birth, and email
     const teacherRes = await client.query(
