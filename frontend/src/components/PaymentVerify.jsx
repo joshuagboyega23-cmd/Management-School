@@ -46,7 +46,9 @@ export default function PaymentVerify() {
           const payment = res.data.payment;
           if (payment?.student_id && payment.term) {
             try {
-              const balanceRes = await API.get(`/payments/balance/${payment.student_id}`);
+              const paymentYear = String(payment.term).match(/(\d{4})$/)?.[1];
+              const yearQuery = paymentYear ? `?year=${paymentYear}` : '';
+              const balanceRes = await API.get(`/payments/balance/${payment.student_id}${yearQuery}`);
               const termName = String(payment.term).replace(/\s+\d{4}$/, '');
               receiptBalance = (Array.isArray(balanceRes.data?.data) ? balanceRes.data.data : [])
                 .find((item) => item.term === termName) || null;

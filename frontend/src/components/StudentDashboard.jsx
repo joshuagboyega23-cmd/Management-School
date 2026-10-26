@@ -472,8 +472,18 @@ export default function StudentDashboard() {
                         <p className="text-[11px] font-semibold text-slate-500 xl:hidden">Receipt</p>
                         {p.status === 'SUCCESS' ? (
                           <button
-                            onClick={() => {
-                              const balance = feeBalances.find((item) => String(p.term || 'First Term').startsWith(item.term));
+                            onClick={async () => {
+                              const paymentYear = String(p.term || '').match(/(\d{4})$/)?.[1];
+                              const yearQuery = paymentYear ? `?year=${paymentYear}` : '';
+                              let balance = null;
+                              try {
+                                const balanceRes = await API.get(`/payments/balance/${student.id}${yearQuery}`);
+                                const balances = Array.isArray(balanceRes.data?.data) ? balanceRes.data.data : [];
+                                balance = balances.find((item) => String(p.term || 'First Term').startsWith(item.term)) || null;
+                              } catch (error) {
+                                console.error('Unable to fetch receipt balance:', error);
+                                balance = feeBalances.find((item) => String(p.term || 'First Term').startsWith(item.term)) || null;
+                              }
                               downloadReceiptPDF({
                                 ...p,
                                 reference: p.reference,

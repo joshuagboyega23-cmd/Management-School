@@ -30,7 +30,8 @@ export default function AdminDashboard() {
   const [paymentHistory, setPaymentHistory] = useState([]);
   const [verifyingRef, setVerifyingRef] = useState('');
   const [feeRows, setFeeRows] = useState([]);
-  const [feeForm, setFeeForm] = useState({ classId: '', term: 'First Term', amount: '' });
+  const [studentFeeRows, setStudentFeeRows] = useState([]);
+  const [feeForm, setFeeForm] = useState({ classId: '', studentId: '', term: 'First Term', amount: '' });
   const [savingFee, setSavingFee] = useState(false);
   const [announcementForm, setAnnouncementForm] = useState({
     title: '',
@@ -170,17 +171,43 @@ export default function AdminDashboard() {
     }
   };
 
+  const fetchStudentFeeRows = async () => {
+    try {
+      const res = await API.get('/fees/students');
+      setStudentFeeRows(Array.isArray(res.data?.data) ? res.data.data : []);
+    } catch (err) {
+      console.error('Error fetching student fee overrides:', err);
+      setStudentFeeRows([]);
+    }
+  };
+
+  const handleDeleteStudentFee = async (fee) => {
+    const confirmed = window.confirm(
+      `Remove the special fee for ${fee.student_name} (${fee.class_name}) — ${fee.term}? The class fee will apply again.`
+    );
+    if (!confirmed) return;
+    try {
+      await API.delete(`/fees/students/${fee.id}`);
+      showNotification('success', 'Student fee override removed.');
+      await fetchStudentFeeRows();
+    } catch (err) {
+      showNotification('error', err.response?.data?.message || 'Could not remove student fee override.');
+    }
+  };
+
   const handleFeeSubmit = async (e) => {
     e.preventDefault();
     try {
       setSavingFee(true);
       await API.put('/fees', {
         classId: Number(feeForm.classId),
+        ...(feeForm.studentId ? { studentId: Number(feeForm.studentId) } : {}),
         term: feeForm.term,
         amount: Number(feeForm.amount)
       });
-      showNotification('success', 'School fee saved successfully.');
+      showNotification('success', feeForm.studentId ? 'Student fee saved successfully.' : 'School fee saved successfully.');
       await fetchFeeRows();
+      await fetchStudentFeeRows();
     } catch (err) {
       showNotification('error', err.response?.data?.message || 'Could not save school fee.');
     } finally {
@@ -302,6 +329,7 @@ export default function AdminDashboard() {
     setIsSidebarOpen(false);
     if (tab === 'fees') {
       fetchFeeRows();
+      fetchStudentFeeRows();
     }
   };
 
@@ -865,7 +893,7 @@ export default function AdminDashboard() {
                   <select
                     id="fee-class"
                     value={feeForm.classId}
-                    onChange={(e) => setFeeForm({ ...feeForm, classId: e.target.value })}
+                    onChange={(e) => setFeeForm({ ...feeForm, classId: e.target.value, studentId: '' })}
                     className="w-full rounded-lg border border-slate-300 bg-white p-2.5 text-sm"
                     required
                   >
@@ -874,6 +902,28 @@ export default function AdminDashboard() {
                       <option key={classItem.id} value={classItem.id}>{classItem.name}</option>
                     ))}
                   </select>
+                </div>
+                <div>
+                  <label htmlFor="fee-student" className="mb-1 block text-xs font-semibold text-slate-600">Student</label>
+                  <select
+                    id="fee-student"
+                    value={feeForm.studentId}
+                    onChange={(e) => setFeeForm({ ...feeForm, studentId: e.target.value })}
+                    className="w-full rounded-lg border border-slate-300 bg-white p-2.5 text-sm"
+                    disabled={!feeForm.classId}
+                  >
+                    <option value="">All students in class</option>
+                    {students
+                      .filter((student) => String(student.class_id) === feeForm.classId)
+                      .map((student) => (
+                        <option key={student.id} value={student.id}>
+                          {student.name} ({student.admission_no})
+                        </option>
+                      ))}
+                  </select>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Choose a student to set a special fee (e.g. sibling discount). Otherwise the fee applies to the whole class.
+                  </p>
                 </div>
                 <div>
                   <label htmlFor="fee-term" className="mb-1 block text-xs font-semibold text-slate-600">Term</label>
@@ -894,7 +944,7 @@ export default function AdminDashboard() {
                   <input
                     id="fee-amount"
                     type="number"
-                    min="0.01"
+                    min={feeForm.studentId ? '0' : '0.01'}
                     step="0.01"
                     value={feeForm.amount}
                     onChange={(e) => setFeeForm({ ...feeForm, amount: e.target.value })}
@@ -905,7 +955,7 @@ export default function AdminDashboard() {
                 </div>
                 <button
                   type="submit"
-                  disabled={savingFee || !feeForm.classId || !feeForm.amount || Number(feeForm.amount) <= 0}
+                  disabled={savingFee || !feeForm.classId || feeForm.amount === '' || Number(feeForm.amount) < 0 || (!feeForm.studentId && Number(feeForm.amount) <= 0)}
                   className="flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 sm:col-span-2"
                 >
                   {savingFee ? 'Saving...' : 'Save Fee'}
@@ -935,6 +985,7 @@ export default function AdminDashboard() {
                         key={fee.id}
                         onClick={() => setFeeForm({
                           classId: String(fee.class_id),
+                          studentId: '',
                           term: fee.term,
                           amount: String(fee.amount)
                         })}
@@ -943,6 +994,7 @@ export default function AdminDashboard() {
                             e.preventDefault();
                             setFeeForm({
                               classId: String(fee.class_id),
+                              studentId: '',
                               term: fee.term,
                               amount: String(fee.amount)
                             });
@@ -957,6 +1009,46 @@ export default function AdminDashboard() {
                         <td className="px-3 py-3 text-slate-600">{fee.term}</td>
                         <td className="px-3 py-3 font-semibold text-slate-800">₦{Number(fee.amount).toLocaleString()}</td>
                         <td className="px-3 py-3 text-slate-500">{formatDateTime(fee.updated_at)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <h3 className="mb-4 text-lg font-bold text-slate-800">Student fee overrides</h3>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[700px] text-left text-sm">
+                  <thead className="border-b border-slate-200 text-xs uppercase text-slate-500">
+                    <tr>
+                      <th className="px-3 py-3">Student</th>
+                      <th className="px-3 py-3">Class</th>
+                      <th className="px-3 py-3">Term</th>
+                      <th className="px-3 py-3">Fee</th>
+                      <th className="px-3 py-3">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {studentFeeRows.length === 0 ? (
+                      <tr>
+                        <td colSpan="5" className="px-3 py-6 text-center text-slate-500">No student fee overrides set.</td>
+                      </tr>
+                    ) : studentFeeRows.map((fee) => (
+                      <tr key={fee.id}>
+                        <td className="px-3 py-3 font-medium text-slate-800">{fee.student_name}</td>
+                        <td className="px-3 py-3 text-slate-600">{fee.class_name}</td>
+                        <td className="px-3 py-3 text-slate-600">{fee.term}</td>
+                        <td className="px-3 py-3 font-semibold text-slate-800">₦{Number(fee.amount).toLocaleString()}</td>
+                        <td className="px-3 py-3">
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteStudentFee(fee)}
+                            className="rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-semibold text-red-700 transition hover:bg-red-100"
+                          >
+                            Remove
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>

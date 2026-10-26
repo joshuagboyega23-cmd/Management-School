@@ -465,6 +465,15 @@ const schemas = {
     amount: z.number().positive('Amount must be a positive number')
   }),
 
+  studentFee: z.object({
+    classId: z.number().int().positive('classId must be a positive integer'),
+    studentId: z.number().int().positive('studentId must be a positive integer'),
+    term: z.enum(['First Term', 'Second Term', 'Third Term'], {
+      error: "Term must be 'First Term', 'Second Term', or 'Third Term'"
+    }),
+    amount: z.number().min(0, 'Amount must be a non-negative number')
+  }),
+
   paymentInit: z.object({
     studentId: z.number().int().positive('studentId must be a positive integer'),
     amount: z.number().positive('Amount must be a positive number'),
@@ -1579,9 +1588,73 @@ app.get('/api/fees', verifyToken, requireRole('ADMIN', 'SUPERADMIN'), async (req
   }
 });
 
-app.put('/api/fees', verifyToken, requireRole('ADMIN', 'SUPERADMIN'), validate(schemas.classFee), async (req, res) => {
+app.get('/api/fees/students', verifyToken, requireRole('ADMIN', 'SUPERADMIN'), async (req, res) => {
   try {
-    const { classId, term, amount } = req.body;
+    const fees = await req.db.query(
+      `SELECT sf.id, sf.student_id, s.full_name AS student_name, s.admission_number,
+              c.name AS class_name, sf.term, sf.amount, sf.updated_at
+       FROM student_fees sf
+       JOIN students s ON s.id = sf.student_id
+       LEFT JOIN classes c ON c.id = s.class_id
+       ORDER BY c.name, s.full_name, sf.term`
+    );
+    res.json({ success: true, data: fees.rows });
+  } catch (error) {
+    return serverError(res, error, '/api/fees/students');
+  }
+});
+
+app.put('/api/fees', verifyToken, requireRole('ADMIN', 'SUPERADMIN'), (req, res, next) => (
+  req.body?.studentId === undefined
+    ? validate(schemas.classFee)
+    : validate(schemas.studentFee)
+)(req, res, next), async (req, res) => {
+  try {
+    const { classId, studentId, term, amount } = req.body;
+    if (studentId !== undefined) {
+      const existingFee = await req.db.query(
+        `SELECT s.full_name AS student_name, c.name AS class_name, sf.amount AS old_amount
+         FROM students s
+         LEFT JOIN classes c ON c.id = s.class_id
+         LEFT JOIN student_fees sf ON sf.student_id = s.id AND sf.term = $3
+         WHERE s.id = $1 AND s.class_id = $2`,
+        [studentId, classId, term]
+      );
+      if (existingFee.rows.length === 0) {
+        return res.status(404).json({ success: false, message: 'Student not found in the specified class.' });
+      }
+
+      const savedFee = await req.db.query(
+        `INSERT INTO student_fees (student_id, term, amount, updated_by)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (student_id, term)
+         DO UPDATE SET amount = EXCLUDED.amount, updated_by = EXCLUDED.updated_by, updated_at = NOW()
+         RETURNING id, student_id, term, amount, updated_at`,
+        [studentId, term, amount, req.user.id]
+      );
+      const previousAmount = existingFee.rows[0].old_amount;
+      const previousText = previousAmount === null
+        ? ''
+        : ` (previously ₦${previousAmount})`;
+      await logActivity({
+        db: req.db,
+        actorId: req.user.id,
+        actorName: req.user.email || 'Administrator',
+        actorRole: req.user.role,
+        action: 'Fees',
+        targetDescription: `Set student fee: ${existingFee.rows[0].student_name} (${existingFee.rows[0].class_name}) — ${term} — ₦${savedFee.rows[0].amount}${previousText}`
+      });
+
+      return res.json({
+        success: true,
+        data: {
+          ...savedFee.rows[0],
+          student_name: existingFee.rows[0].student_name,
+          class_name: existingFee.rows[0].class_name
+        }
+      });
+    }
+
     const existingFee = await req.db.query(
       `SELECT c.name AS class_name, cf.amount AS old_amount
        FROM classes c
@@ -1620,6 +1693,43 @@ app.put('/api/fees', verifyToken, requireRole('ADMIN', 'SUPERADMIN'), validate(s
     });
   } catch (error) {
     return serverError(res, error, '/api/fees');
+  }
+});
+
+app.delete('/api/fees/students/:id', verifyToken, requireRole('ADMIN', 'SUPERADMIN'), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ success: false, message: 'Student fee ID must be a positive integer.' });
+    }
+
+    const existingFee = await req.db.query(
+      `SELECT sf.id, sf.term, sf.amount, s.full_name AS student_name,
+              COALESCE(c.name, 'No class') AS class_name
+       FROM student_fees sf
+       JOIN students s ON s.id = sf.student_id
+       LEFT JOIN classes c ON c.id = s.class_id
+       WHERE sf.id = $1`,
+      [id]
+    );
+    if (existingFee.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Student fee override not found.' });
+    }
+
+    const fee = existingFee.rows[0];
+    await req.db.query('DELETE FROM student_fees WHERE id = $1', [fee.id]);
+    await logActivity({
+      db: req.db,
+      actorId: req.user.id,
+      actorName: req.user.email || 'Administrator',
+      actorRole: req.user.role,
+      action: 'Fees',
+      targetDescription: `Removed student fee override: ${fee.student_name} (${fee.class_name}) — ${fee.term} — ₦${fee.amount}`
+    });
+
+    res.json({ success: true, message: 'Student fee override removed successfully.' });
+  } catch (error) {
+    return serverError(res, error, '/api/fees/students/:id');
   }
 });
 
@@ -2517,20 +2627,33 @@ app.get('/api/parent/children', verifyToken, requireRole('PARENT'), async (req, 
 // =============================================================
 
 async function getFeeSummary(db, studentId, term) {
+  const terms = ['First Term', 'Second Term', 'Third Term'];
+  const baseTerm = typeof term === 'string'
+    ? terms.find((candidate) => term.startsWith(candidate))
+    : null;
+  if (!baseTerm) {
+    return { fee: null, paid: 0, outstanding: null };
+  }
+  const year = term.match(/(\d{4})$/)?.[1] || String(new Date().getFullYear());
+
   const feeResult = await db.query(
-    `SELECT cf.amount
-     FROM class_fees cf
-     JOIN students s ON s.class_id = cf.class_id
-     WHERE s.id = $1 AND cf.term = $2`,
-    [studentId, term]
+    `SELECT COALESCE(sf.amount, cf.amount) AS fee
+     FROM students s
+     LEFT JOIN class_fees cf ON cf.class_id = s.class_id AND cf.term = $2
+     LEFT JOIN student_fees sf ON sf.student_id = s.id AND sf.term = $2
+     WHERE s.id = $1`,
+    [studentId, baseTerm]
   );
   const paidResult = await db.query(
     `SELECT COALESCE(SUM(amount), 0) AS paid
      FROM fee_payments
-     WHERE student_id = $1 AND term = $2 AND status = 'SUCCESS'`,
-    [studentId, term]
+     WHERE student_id = $1 AND status = 'SUCCESS'
+       AND (term = $2 OR term = $2 || ' ' || $3)`,
+    [studentId, baseTerm, year]
   );
-  const fee = feeResult.rows.length > 0 ? Number(feeResult.rows[0].amount) : null;
+  const fee = feeResult.rows.length > 0 && feeResult.rows[0].fee !== null
+    ? Number(feeResult.rows[0].fee)
+    : null;
   const paid = Number(paidResult.rows[0].paid);
 
   return {
@@ -2585,6 +2708,12 @@ app.get('/api/payments/student/:studentId', verifyToken, async (req, res) => {
 
 app.get('/api/payments/balance/:studentId', verifyToken, async (req, res) => {
   const { studentId } = req.params;
+  const requestedYear = req.query.year;
+
+  if (requestedYear !== undefined && (typeof requestedYear !== 'string' || !/^\d{4}$/.test(requestedYear))) {
+    return res.status(400).json({ success: false, message: 'Year must be a 4-digit year.' });
+  }
+  const year = requestedYear || String(new Date().getFullYear());
 
   try {
     if (req.user.role === 'PARENT') {
@@ -2614,7 +2743,7 @@ app.get('/api/payments/balance/:studentId', verifyToken, async (req, res) => {
     const terms = ['First Term', 'Second Term', 'Third Term'];
     const data = await Promise.all(terms.map(async (term) => ({
       term,
-      ...await getFeeSummary(req.db || pool, studentId, term)
+      ...await getFeeSummary(req.db || pool, studentId, `${term} ${year}`)
     })));
     res.json({ success: true, data });
   } catch (error) {
