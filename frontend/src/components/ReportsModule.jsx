@@ -322,46 +322,48 @@ export default function ReportsModule({ students, onSubmitGrade, onFetchReportCa
           </form>
 
           {reportList.length > 0 ? (
-            <table className="w-full text-left border-collapse text-xs bg-white rounded border border-gray-200">
-              <thead>
-                <tr className="border-b bg-gray-100">
-                  <th className="p-2">Subject</th>
-                  <th className="p-2">Term</th>
-                  <th className="p-2">CA</th>
-                  <th className="p-2">Exam</th>
-                  <th className="p-2">Total</th>
-                  <th className="p-2">Grade</th>
-                  {currentUser.role && ['TEACHER', 'ADMIN', 'SUPERADMIN'].includes(currentUser.role) && <th className="p-2">Actions</th>}
-                </tr>
-              </thead>
-              <tbody>
-                {reportList.map((s, idx) => (
-                  <tr key={idx} className="border-b align-top">
-                    <td className="p-2 font-medium">{s.subject}</td>
-                    <td className="p-2">{s.term}</td>
-                    <td className="p-2">{editingRowId === s.id ? <input type="number" value={editForm.caScore} onChange={(e) => setEditForm({ ...editForm, caScore: e.target.value })} className="w-20 border border-gray-300 rounded px-2 py-1" /> : s.ca_score}</td>
-                    <td className="p-2">{editingRowId === s.id ? <input type="number" value={editForm.examScore} onChange={(e) => setEditForm({ ...editForm, examScore: e.target.value })} className="w-20 border border-gray-300 rounded px-2 py-1" /> : s.exam_score}</td>
-                    <td className="p-2 font-bold">{s.total_score}</td>
-                    <td className="p-2 text-blue-600 font-bold">{s.grade}</td>
-                    {currentUser.role && ['TEACHER', 'ADMIN', 'SUPERADMIN'].includes(currentUser.role) && (
-                      <td className="p-2">
-                        {editingRowId === s.id ? (
-                          <div className="flex gap-2">
-                            <button type="button" onClick={() => saveInlineEdit(s.id)} className="text-xs bg-blue-600 text-white px-2 py-1 rounded">Save</button>
-                            <button type="button" onClick={() => setEditingRowId(null)} className="text-xs border border-gray-300 px-2 py-1 rounded">Cancel</button>
-                          </div>
-                        ) : (
-                          <div className="flex gap-2">
-                            <button type="button" onClick={() => startEdit(s)} className="border border-gray-300 rounded p-1 text-slate-700" title="Edit grade"><Pencil className="h-3.5 w-3.5" /></button>
-                            <button type="button" onClick={() => deleteInlineGrade(s.id, s.subject, s.term)} className="border border-red-200 rounded p-1 text-red-600" title="Delete grade"><Trash2 className="h-3.5 w-3.5" /></button>
-                          </div>
-                        )}
-                      </td>
-                    )}
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs bg-white rounded border border-gray-200">
+                <thead>
+                  <tr className="border-b bg-gray-100">
+                    <th className="p-2">Subject</th>
+                    <th className="p-2">Term</th>
+                    <th className="p-2">CA</th>
+                    <th className="p-2">Exam</th>
+                    <th className="p-2">Total</th>
+                    <th className="p-2">Grade</th>
+                    {currentUser.role && ['TEACHER', 'ADMIN', 'SUPERADMIN'].includes(currentUser.role) && <th className="p-2">Actions</th>}
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {reportList.map((s, idx) => (
+                    <tr key={idx} className="border-b align-top">
+                      <td className="p-2 font-medium">{s.subject}</td>
+                      <td className="p-2">{s.term}</td>
+                      <td className="p-2">{editingRowId === s.id ? <input type="number" value={editForm.caScore} onChange={(e) => setEditForm({ ...editForm, caScore: e.target.value })} className="w-20 border border-gray-300 rounded px-2 py-1" /> : s.ca_score}</td>
+                      <td className="p-2">{editingRowId === s.id ? <input type="number" value={editForm.examScore} onChange={(e) => setEditForm({ ...editForm, examScore: e.target.value })} className="w-20 border border-gray-300 rounded px-2 py-1" /> : s.exam_score}</td>
+                      <td className="p-2 font-bold">{s.total_score}</td>
+                      <td className="p-2 text-blue-600 font-bold">{s.grade}</td>
+                      {currentUser.role && ['TEACHER', 'ADMIN', 'SUPERADMIN'].includes(currentUser.role) && (
+                        <td className="p-2">
+                          {editingRowId === s.id ? (
+                            <div className="flex gap-2">
+                              <button type="button" onClick={() => saveInlineEdit(s.id)} className="text-xs bg-blue-600 text-white px-2 py-1 rounded">Save</button>
+                              <button type="button" onClick={() => setEditingRowId(null)} className="text-xs border border-gray-300 px-2 py-1 rounded">Cancel</button>
+                            </div>
+                          ) : (
+                            <div className="flex gap-2">
+                              <button type="button" onClick={() => startEdit(s)} className="border border-gray-300 rounded p-1 text-slate-700" title="Edit grade"><Pencil className="h-3.5 w-3.5" /></button>
+                              <button type="button" onClick={() => deleteInlineGrade(s.id, s.subject, s.term)} className="border border-red-200 rounded p-1 text-red-600" title="Delete grade"><Trash2 className="h-3.5 w-3.5" /></button>
+                            </div>
+                          )}
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           ) : reportData && (
             <p className="text-xs text-gray-500 italic py-2">No grades recorded yet for this student.</p>
           )}
